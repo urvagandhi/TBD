@@ -81,45 +81,6 @@ class _StepTimer:
         self._step_start = time.time()
 
 
-PARSE_FALLBACK: dict = {
-    "title": "Unknown Title",
-    "authors": [],
-    "abstract": {"text": "", "word_count": 0},
-    "keywords": [],
-    "imrad": {
-        "introduction": False,
-        "methods": False,
-        "results": False,
-        "discussion": False,
-    },
-    "sections": [],
-    "figures": [],
-    "tables": [],
-    "references": [],
-}
-
-VALIDATE_FALLBACK: dict = {
-    "overall_score": 50,
-    "breakdown": {
-        "document_format": {"score": 50, "issues": ["Unable to fully validate"]},
-        "abstract": {"score": 50, "issues": []},
-        "headings": {"score": 50, "issues": []},
-        "citations": {"score": 50, "issues": []},
-        "references": {"score": 50, "issues": []},
-        "figures": {"score": 50, "issues": []},
-        "tables": {"score": 50, "issues": []},
-    },
-    "changes_made": [],
-    "imrad_check": {
-        "introduction": False,
-        "methods": False,
-        "results": False,
-        "discussion": False,
-    },
-    "citation_consistency": {"orphan_citations": [], "uncited_references": []},
-    "warnings": ["Validation completed with partial data"],
-}
-
 
 def run_pipeline(paper_content: str, journal_style: str) -> dict:
     """
@@ -284,7 +245,7 @@ def run_pipeline(paper_content: str, journal_style: str) -> dict:
     raw_output = str(result)
 
     logger.info("[PIPELINE] All steps complete — parsing compliance report...")
-    compliance_report = _safe_parse_compliance(raw_output)
+    compliance_report = _parse_compliance_report(raw_output)
     overall_score = compliance_report.get("overall_score", "N/A")
     logger.info("[PIPELINE] Compliance report parsed — overall_score=%s", overall_score)
 
@@ -307,40 +268,44 @@ def run_pipeline(paper_content: str, journal_style: str) -> dict:
     }
 
 
-def _safe_parse_compliance(raw: str) -> dict:
-    """Parse compliance_report from final agent output with fallback."""
-    try:
-        return extract_json_from_llm(raw)
-    except (ValueError, KeyError) as e:
-        logger.warning("[PIPELINE] Compliance JSON parse failed (%s) — using fallback", e)
-        return VALIDATE_FALLBACK.copy()
+def _parse_compliance_report(raw: str) -> dict:
+    """
+    Parse the compliance_report JSON from the final agent output.
+
+    Raises:
+        ValueError: If the output cannot be parsed as valid JSON.
+    """
+    report = extract_json_from_llm(raw)
+    if "overall_score" not in report:
+        raise ValueError(
+            f"Compliance report missing 'overall_score'. Raw output:\n{raw[:500]}"
+        )
+    return report
 
 
 def _write_docx_from_transform(transform_raw: str, rules: dict) -> str:
     """
     Extract docx_instructions from transform output and write the DOCX file.
-    Falls back to a minimal document on parse failure.
+
+    Raises:
+        ValueError: If transform output cannot be parsed or docx_instructions is missing.
     """
     output_filename = f"formatted_{uuid.uuid4().hex[:8]}.docx"
     output_path = str(OUTPUTS_DIR / output_filename)
 
-    try:
-        transform_data = extract_json_from_llm(transform_raw)
-        docx_instructions = transform_data.get("docx_instructions", {})
-        if not docx_instructions:
-            logger.warning("[DOCX] docx_instructions missing from transform output — using empty sections")
-            docx_instructions = {"rules": rules, "sections": []}
-        sections_count = len(docx_instructions.get("sections", []))
-        logger.info("[DOCX] Building document — %d sections", sections_count)
-        write_formatted_docx(docx_instructions, output_path)
-    except Exception as e:
-        logger.warning("[DOCX] Transform parse failed (%s) — writing fallback document", e)
-        fallback_instructions = {
-            "rules": rules,
-            "sections": [
-                {"type": "paragraph", "content": "Formatted document — see compliance report for details."}
-            ],
-        }
-        write_formatted_docx(fallback_instructions, output_path)
+    transform_data = extract_json_from_llm(transform_raw)
+    docx_instructions = transform_data.get("docx_instructions")
 
+    if not docx_instructions or not docx_instructions.get("sections"):
+        raise ValueError(
+            "Transform agent did not produce docx_instructions.sections. "
+            f"Transform output keys: {list(transform_data.keys())}"
+        )
+
+    # Inject the real journal rules so docx_writer always has the source of truth
+    docx_instructions["rules"] = rules
+
+    sections_count = len(docx_instructions["sections"])
+    logger.info("[DOCX] Building document — %d sections", sections_count)
+    write_formatted_docx(docx_instructions, output_path)
     return output_filename

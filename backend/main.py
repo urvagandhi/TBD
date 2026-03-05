@@ -25,6 +25,7 @@ from crew import run_pipeline
 from tools.pdf_reader import extract_pdf_text
 from tools.docx_reader import extract_docx_text
 from tools.rule_loader import JOURNAL_MAP, get_supported_journals
+from tools.tool_errors import ToolError
 
 app = FastAPI(
     title="Agent Paperpal API",
@@ -163,7 +164,7 @@ async def format_document(
 
     except HTTPException:
         raise
-    except ValueError as e:
+    except (ToolError, ValueError) as e:
         logger.error("[REQUEST:%s] Validation error — %s", request_id, str(e))
         raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:

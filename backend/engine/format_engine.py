@@ -36,6 +36,32 @@ class FormatEngine:
             "columns": doc["columns"],
         }
 
+    def get_font(self) -> str:
+        """Return the document font name."""
+        return self._rules["document"].get("font", "Times New Roman")
+
+    def get_font_size(self) -> int:
+        """Return the document font size in points."""
+        return int(self._rules["document"].get("font_size", 12))
+
+    def get_line_spacing(self) -> float:
+        """Return the line spacing multiplier (1.0, 1.5, 2.0)."""
+        return float(self._rules["document"].get("line_spacing", 2.0))
+
+    def get_margins(self) -> dict:
+        """Return margins dict with top/bottom/left/right keys."""
+        return self._rules["document"].get("margins", {
+            "top": "1in", "bottom": "1in", "left": "1in", "right": "1in",
+        })
+
+    def get_alignment(self) -> str:
+        """Return body text alignment: 'left' or 'justify'."""
+        return self._rules["document"].get("alignment", "left")
+
+    def get_columns(self) -> int:
+        """Return number of columns (1 or 2)."""
+        return int(self._rules["document"].get("columns", 1))
+
     # ------------------------------------------------------------------
     # Heading rules
     # ------------------------------------------------------------------
@@ -59,6 +85,46 @@ class FormatEngine:
             raise KeyError(f"Heading level '{level}' not found. Available: {list(headings.keys())}")
         return headings[level]
 
+    def get_heading_style(self, level: int) -> dict:
+        """
+        Return heading style dict for the given numeric level (1, 2, or 3).
+
+        Returns:
+            dict with bold (bool), italic (bool), centered (bool),
+            case (str), numbering (str), font_size (int).
+        """
+        key = f"H{level}"
+        headings = self._rules.get("headings", {})
+        rules = headings.get(key, {})
+        return {
+            "bold": rules.get("bold", True),
+            "italic": rules.get("italic", False),
+            "centered": rules.get("centered", False),
+            "case": rules.get("case", "Title Case"),
+            "numbering": rules.get("numbering", "none"),
+            "font_size": int(rules.get("font_size", self.get_font_size())),
+        }
+
+    # ------------------------------------------------------------------
+    # Abstract rules
+    # ------------------------------------------------------------------
+
+    def get_abstract_rules(self) -> dict:
+        """Return the full abstract section rules."""
+        return self._rules.get("abstract", {})
+
+    def get_abstract_word_limit(self) -> int:
+        """Return the maximum word count for the abstract."""
+        return int(self._rules.get("abstract", {}).get("max_words", 250))
+
+    def is_abstract_label_centered(self) -> bool:
+        """Return True if the abstract label should be centered."""
+        return bool(self._rules.get("abstract", {}).get("label_centered", True))
+
+    def is_abstract_label_bold(self) -> bool:
+        """Return True if the abstract label should be bold."""
+        return bool(self._rules.get("abstract", {}).get("label_bold", False))
+
     # ------------------------------------------------------------------
     # Figure / Table rules
     # ------------------------------------------------------------------
@@ -67,9 +133,37 @@ class FormatEngine:
         """Return figure formatting rules."""
         return self._rules["figures"]
 
+    def get_figure_label_prefix(self) -> str:
+        """Return the figure label prefix, e.g. 'Figure' or 'Fig.'."""
+        return self._rules.get("figures", {}).get("label_prefix", "Figure")
+
+    def get_figure_caption_position(self) -> str:
+        """Return figure caption position: 'above' or 'below'."""
+        return self._rules.get("figures", {}).get("caption_position", "below")
+
+    def is_figure_label_bold(self) -> bool:
+        """Return True if the figure label should be bold."""
+        return bool(self._rules.get("figures", {}).get("label_bold", True))
+
     def get_table_rules(self) -> dict:
         """Return table formatting rules."""
         return self._rules["tables"]
+
+    def get_table_label_prefix(self) -> str:
+        """Return the table label prefix, e.g. 'Table' or 'TABLE'."""
+        return self._rules.get("tables", {}).get("label_prefix", "Table")
+
+    def get_table_caption_position(self) -> str:
+        """Return table caption position: 'above' or 'below'."""
+        return self._rules.get("tables", {}).get("caption_position", "above")
+
+    def is_table_label_bold(self) -> bool:
+        """Return True if the table label should be bold."""
+        return bool(self._rules.get("tables", {}).get("label_bold", True))
+
+    def get_table_border_style(self) -> str:
+        """Return table border style string."""
+        return self._rules.get("tables", {}).get("border_style", "top_bottom_only")
 
     # ------------------------------------------------------------------
     # Reference templates
@@ -97,9 +191,21 @@ class FormatEngine:
             )
         return formats[reference_type]
 
+    def get_reference_ordering(self) -> str:
+        """Return reference ordering: 'alphabetical' or 'appearance'."""
+        return self._rules.get("references", {}).get("ordering", "alphabetical")
+
+    def has_hanging_indent(self) -> bool:
+        """Return True if references use hanging indent."""
+        return bool(self._rules.get("references", {}).get("hanging_indent", True))
+
     # ------------------------------------------------------------------
     # Citation generation
     # ------------------------------------------------------------------
+
+    def get_citation_style(self) -> str:
+        """Return citation style: 'author-date' or 'numbered'."""
+        return self._rules.get("citations", {}).get("style", "author-date")
 
     def format_citation(
         self,
@@ -140,8 +246,6 @@ class FormatEngine:
 
         # --- Numbered citation (IEEE, Vancouver) ---
         if style == "numbered":
-            # The actual number is assigned by document context;
-            # return a placeholder token the transform agent can replace.
             fmt = citations.get("format_numbered") or "[N]"
             return fmt.replace("N", "?")
 
@@ -156,7 +260,6 @@ class FormatEngine:
         elif n == 2:
             author_part = f"{authors[0]}{separator}{authors[1]}"
         elif n < et_al_threshold:
-            # e.g. et_al_threshold=4 → 3 authors listed individually
             all_but_last = ", ".join(authors[:-1])
             author_part = f"{all_but_last}{separator}{authors[-1]}"
         else:
@@ -166,19 +269,32 @@ class FormatEngine:
         open_b = "(" if brackets == "parentheses" else "["
         close_b = ")" if brackets == "parentheses" else "]"
 
-        # Determine separator between author and year (APA uses comma, Chicago/Springer use space)
-        # Detect from format_one_author template if available
         sample = citations.get("format_one_author", "(Smith, 2020)")
         author_year_sep = ", " if ", " in (sample or "") else " "
 
         if page is not None and citations.get("include_page_for_quotes", False):
             page_str = page_format_template.replace("{page}", str(page))
-            # page_format may be literal like "p. 45" or "45" — normalise
             if str(page) not in page_str:
                 page_str = f"p. {page}"
             return f"{open_b}{author_part}{author_year_sep}{year}, {page_str}{close_b}"
 
         return f"{open_b}{author_part}{author_year_sep}{year}{close_b}"
+
+    # ------------------------------------------------------------------
+    # General rules
+    # ------------------------------------------------------------------
+
+    def get_et_al_threshold(self) -> int:
+        """Return the number of authors at which 'et al.' is used."""
+        return int(self._rules.get("general_rules", {}).get("et_al_threshold", 3))
+
+    def uses_ampersand(self) -> bool:
+        """Return True if ampersand (&) is used instead of 'and' in citations."""
+        return bool(self._rules.get("general_rules", {}).get("use_ampersand_in_citations", False))
+
+    def get_doi_format(self) -> str:
+        """Return the DOI format string."""
+        return self._rules.get("general_rules", {}).get("doi_format", "https://doi.org/xxxxx")
 
     # ------------------------------------------------------------------
     # Convenience accessors
@@ -242,23 +358,22 @@ if __name__ == "__main__":
         print("="*60)
         engine = load_format_engine(journal)
 
-        print("Document settings:")
-        print(f"  {engine.get_document_settings()}")
-
-        print("H1 heading rules:")
-        print(f"  {engine.get_heading_rules('H1')}")
-
-        print("Citation — 1 author:")
-        print(f"  {engine.format_citation(['Smith'], 2020)}")
-
-        print("Citation — 2 authors:")
-        print(f"  {engine.format_citation(['Smith', 'Jones'], 2020)}")
-
-        print("Citation — 3+ authors:")
-        print(f"  {engine.format_citation(['Smith', 'Jones', 'Brown'], 2020)}")
-
-        print("Citation — with page:")
-        print(f"  {engine.format_citation(['Smith'], 2020, page=45)}")
-
-        print("journal_article template:")
-        print(f"  {engine.get_reference_template('journal_article')}")
+        print(f"  Font:          {engine.get_font()} {engine.get_font_size()}pt")
+        print(f"  Line spacing:  {engine.get_line_spacing()}")
+        print(f"  Alignment:     {engine.get_alignment()}")
+        print(f"  Columns:       {engine.get_columns()}")
+        print(f"  Citation:      {engine.get_citation_style()}")
+        print(f"  Et al at:      {engine.get_et_al_threshold()}")
+        print(f"  Ampersand:     {engine.uses_ampersand()}")
+        print(f"  DOI format:    {engine.get_doi_format()}")
+        print(f"  Ref ordering:  {engine.get_reference_ordering()}")
+        print(f"  Hanging indent:{engine.has_hanging_indent()}")
+        print(f"  Fig prefix:    {engine.get_figure_label_prefix()}")
+        print(f"  Fig position:  {engine.get_figure_caption_position()}")
+        print(f"  Tbl prefix:    {engine.get_table_label_prefix()}")
+        print(f"  Tbl position:  {engine.get_table_caption_position()}")
+        print(f"  Abstract limit:{engine.get_abstract_word_limit()} words")
+        print(f"  H1 style:      {engine.get_heading_style(1)}")
+        print(f"  Citation 1 author: {engine.format_citation(['Smith'], 2020)}")
+        print(f"  Citation 2 authors:{engine.format_citation(['Smith', 'Jones'], 2020)}")
+        print(f"  Citation 3+ authors:{engine.format_citation(['Smith', 'Jones', 'Brown'], 2020)}")
