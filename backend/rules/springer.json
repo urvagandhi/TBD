@@ -1,86 +1,136 @@
 {
-  "style_name": "Springer",
+  "style_name": "Springer Basic",
+
   "document": {
     "font": "Times New Roman",
-    "font_size": 12,
-    "line_spacing": 1.5,
+    "font_size": 10,
+    "line_spacing": 1.0,
     "margins": {
-      "top": 1.0,
-      "bottom": 1.0,
-      "left": 1.0,
-      "right": 1.0,
-      "unit": "inches"
-    }
+      "top": "1in",
+      "bottom": "1in",
+      "left": "1.25in",
+      "right": "1.25in"
+    },
+    "alignment": "justify",
+    "columns": 1
   },
+
+  "title_page": {
+    "title_case": "Title Case",
+    "title_bold": true,
+    "title_centered": false,
+    "title_font_size": 14
+  },
+
   "abstract": {
     "label": "Abstract",
     "label_bold": true,
     "label_centered": false,
-    "max_words": 300,
-    "indent": false
+    "label_italic": false,
+    "max_words": 250,
+    "indent_first_line": false,
+    "keywords_present": true,
+    "keywords_label": "Keywords:",
+    "keywords_italic": false
   },
-  "keywords": {
-    "label": "Keywords:",
-    "label_bold": true,
-    "position": "after_abstract",
-    "min_count": 4,
-    "max_count": 6,
-    "separator": " · "
-  },
+
   "headings": {
     "H1": {
       "bold": true,
-      "centered": false,
       "italic": false,
+      "centered": false,
+      "underline": false,
       "case": "Title Case",
-      "numbering": true,
-      "number_format": "Numeric"
+      "numbering": "numeric",
+      "font_size": 12
     },
     "H2": {
       "bold": true,
-      "centered": false,
       "italic": false,
+      "centered": false,
+      "underline": false,
       "case": "Title Case",
-      "numbering": true,
-      "number_format": "Numeric_Dot"
+      "numbering": "numeric",
+      "font_size": 11
     },
     "H3": {
       "bold": false,
-      "centered": false,
       "italic": true,
-      "case": "Title Case",
-      "numbering": true,
-      "number_format": "Numeric_Dot_Dot"
+      "centered": false,
+      "underline": false,
+      "indent": false,
+      "case": "Sentence case",
+      "numbering": "numeric",
+      "inline_with_text": false,
+      "font_size": 10
     }
   },
+
   "citations": {
     "style": "author-date",
-    "one_author": "(Author Year)",
-    "two_authors": "(Author1 and Author2 Year)",
-    "three_plus": "(Author1 et al. Year)",
-    "direct_quote": "(Author Year, p. PageNum)"
+    "brackets": "parentheses",
+    "format_one_author": "(Smith 2020)",
+    "format_two_authors": "(Smith and Jones 2020)",
+    "format_three_plus": "(Smith et al. 2020)",
+    "format_numbered": null,
+    "include_page_for_quotes": true,
+    "page_format": "p 45"
   },
+
   "references": {
     "section_label": "References",
     "label_bold": true,
     "label_centered": false,
+    "label_italic": false,
     "ordering": "alphabetical",
     "hanging_indent": true,
-    "hanging_indent_inches": 0.5,
-    "journal_article_format": "Author AA, Author BB (Year) Title of article. Journal Name Volume:Pages. https://doi.org/xxxxx",
-    "doi_required": true
+    "indent_size": "0.5in",
+    "line_spacing": 1.0,
+    "space_between_entries": false,
+    "formats": {
+      "journal_article": "Author AA, Author BB (Year) Title of article. Journal Name Volume(Issue):Page\u2013Page. https://doi.org/xxxxx",
+      "book": "Author AA (Year) Title of Book, Xth edn. Publisher, City",
+      "book_chapter": "Author AA (Year) Title of chapter. In: Editor AA (ed) Title of Book. Publisher, City, pp Page\u2013Page",
+      "website": "Author AA (Year) Title of page. URL. Accessed Day Mon Year",
+      "conference_paper": "Author AA (Year) Title of paper. In: Proceedings of Conference Name, City, pp Page\u2013Page"
+    }
   },
+
   "figures": {
-    "label_format": "Fig. N",
+    "label_prefix": "Fig.",
     "label_bold": true,
+    "label_italic": false,
     "caption_position": "below",
-    "caption_italic": false
+    "caption_italic": false,
+    "caption_alignment": "left",
+    "numbering": "arabic",
+    "note_label": "Note:"
   },
+
   "tables": {
-    "label_format": "Table N",
+    "label_prefix": "Table",
     "label_bold": true,
+    "label_italic": false,
     "caption_position": "above",
-    "borders": "horizontal_only",
-    "footer_notes": true
+    "caption_italic": false,
+    "caption_alignment": "left",
+    "numbering": "arabic",
+    "border_style": "top_bottom_only",
+    "note_label": "Note:"
+  },
+
+  "equations": {
+    "numbering": "right_aligned",
+    "numbering_format": "(1)"
+  },
+
+  "general_rules": {
+    "doi_format": "https://doi.org/xxxxx",
+    "url_format": "direct url",
+    "date_format": "YYYY",
+    "et_al_threshold": 3,
+    "use_ampersand_in_citations": false,
+    "use_ampersand_in_references": false,
+    "oxford_comma": false
   }
 }

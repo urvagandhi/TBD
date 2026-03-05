@@ -5,7 +5,6 @@ import uuid
 from pathlib import Path
 
 from crewai import Crew, Process, Task
-from langchain_google_genai import ChatGoogleGenerativeAI
 
 from agents import (
     create_ingest_agent,
@@ -116,14 +115,11 @@ def run_pipeline(paper_content: str, journal_style: str) -> dict:
     """
     paper_content = _truncate_paper_content(paper_content)
 
-    llm = ChatGoogleGenerativeAI(
-        model=os.environ["GEMINI_MODEL"],
-        temperature=0,
-        max_output_tokens=int(os.getenv("GEMINI_MAX_TOKENS", "4096")),
-        timeout=int(os.getenv("LLM_TIMEOUT", "60")),
-        max_retries=int(os.getenv("LLM_MAX_RETRIES", "3")),
-        google_api_key=os.environ["GEMINI_API_KEY"],
-    )
+    # LiteLLM (used internally by CrewAI) reads GOOGLE_API_KEY for Google AI Studio
+    os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
+
+    model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    llm = f"gemini/{model_name}"
 
     rules = load_rules(journal_style)
 

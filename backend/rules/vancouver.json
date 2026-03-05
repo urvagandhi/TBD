@@ -1,84 +1,136 @@
 {
   "style_name": "Vancouver",
+
   "document": {
     "font": "Times New Roman",
     "font_size": 12,
     "line_spacing": 2.0,
     "margins": {
-      "top": 1.0,
-      "bottom": 1.0,
-      "left": 1.25,
-      "right": 1.25,
-      "unit": "inches"
-    }
+      "top": "1in",
+      "bottom": "1in",
+      "left": "1in",
+      "right": "1in"
+    },
+    "alignment": "left",
+    "columns": 1
   },
+
+  "title_page": {
+    "title_case": "Title Case",
+    "title_bold": false,
+    "title_centered": false,
+    "title_font_size": 12
+  },
+
   "abstract": {
     "label": "Abstract",
     "label_bold": true,
     "label_centered": false,
-    "max_words": 300,
-    "structured": true,
-    "structured_sections": ["Background", "Methods", "Results", "Conclusions"]
+    "label_italic": false,
+    "max_words": 250,
+    "indent_first_line": false,
+    "keywords_present": true,
+    "keywords_label": "Keywords:",
+    "keywords_italic": false
   },
-  "keywords": {
-    "label": "Keywords:",
-    "label_bold": true,
-    "position": "after_abstract",
-    "separator": ";"
-  },
+
   "headings": {
     "H1": {
       "bold": true,
-      "centered": false,
       "italic": false,
-      "case": "Title Case",
-      "numbering": false
+      "centered": false,
+      "underline": false,
+      "case": "UPPERCASE",
+      "numbering": "none",
+      "font_size": 12
     },
     "H2": {
       "bold": true,
-      "centered": false,
       "italic": false,
+      "centered": false,
+      "underline": false,
       "case": "Title Case",
-      "numbering": false
+      "numbering": "none",
+      "font_size": 12
     },
     "H3": {
       "bold": false,
-      "centered": false,
       "italic": true,
-      "case": "Title Case",
-      "numbering": false
+      "centered": false,
+      "underline": false,
+      "indent": false,
+      "case": "Sentence case",
+      "numbering": "none",
+      "inline_with_text": false,
+      "font_size": 12
     }
   },
+
   "citations": {
     "style": "numbered",
-    "format": "(N)",
-    "one_author": "(N)",
-    "two_authors": "(N)",
-    "three_plus": "(N)",
-    "ordering": "appearance",
-    "superscript_option": true
+    "brackets": "parentheses",
+    "format_one_author": "(1)",
+    "format_two_authors": "(1)",
+    "format_three_plus": "(1)",
+    "format_numbered": "(N)",
+    "include_page_for_quotes": false,
+    "page_format": "p. 45"
   },
+
   "references": {
     "section_label": "References",
     "label_bold": true,
     "label_centered": false,
+    "label_italic": false,
     "ordering": "appearance",
-    "hanging_indent": true,
-    "hanging_indent_inches": 0.5,
-    "journal_article_format": "N. Author AA, Author BB. Title of article. Journal Abbreviation. Year;Volume(Issue):Pages.",
-    "max_authors_before_et_al": 6,
-    "et_al_trigger": 7
+    "hanging_indent": false,
+    "indent_size": "0in",
+    "line_spacing": 1.0,
+    "space_between_entries": false,
+    "formats": {
+      "journal_article": "N. Author AA, Author BB. Title of article. Journal Abbreviation. Year Mon Day;Volume(Issue):Page-Page. doi:10.xxxx/xxxxx.",
+      "book": "N. Author AA. Title of Book. Edition. Place: Publisher; Year.",
+      "book_chapter": "N. Author AA. Title of chapter. In: Editor AA, editor. Title of Book. Place: Publisher; Year. p. Page-Page.",
+      "website": "N. Author AA [Internet]. Title of page. Place: Publisher; Year [cited Year Mon Day]. Available from: URL",
+      "conference_paper": "N. Author AA. Title of paper. In: Editor AA, editor. Conference Name; Year Mon Day; City. Place: Publisher; Year. p. Page-Page."
+    }
   },
+
   "figures": {
-    "label_format": "Figure N",
-    "label_bold": true,
+    "label_prefix": "Figure",
+    "label_bold": false,
+    "label_italic": false,
     "caption_position": "below",
-    "caption_italic": false
+    "caption_italic": false,
+    "caption_alignment": "left",
+    "numbering": "arabic",
+    "note_label": "Note:"
   },
+
   "tables": {
-    "label_format": "Table N",
-    "label_bold": true,
+    "label_prefix": "Table",
+    "label_bold": false,
+    "label_italic": false,
     "caption_position": "above",
-    "borders": "horizontal_only"
+    "caption_italic": false,
+    "caption_alignment": "left",
+    "numbering": "arabic",
+    "border_style": "header_only",
+    "note_label": "Note:"
+  },
+
+  "equations": {
+    "numbering": "right_aligned",
+    "numbering_format": "(1)"
+  },
+
+  "general_rules": {
+    "doi_format": "doi:10.xxxx/xxxxx",
+    "url_format": "Available from: URL",
+    "date_format": "Year Mon Day",
+    "et_al_threshold": 6,
+    "use_ampersand_in_citations": false,
+    "use_ampersand_in_references": false,
+    "oxford_comma": false
   }
 }

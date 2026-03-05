@@ -8,12 +8,12 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-load_dotenv()
+load_dotenv(override=True)
 
 from crew import run_pipeline
 from tools.pdf_reader import extract_pdf_text
 from tools.docx_reader import extract_docx_text
-from tools.rule_loader import JOURNAL_MAP
+from tools.rule_loader import JOURNAL_MAP, get_supported_journals
 
 app = FastAPI(
     title="Agent Paperpal API",
@@ -77,10 +77,10 @@ async def format_document(
             detail=f"Unsupported file type '.{ext}'. Upload a PDF or DOCX.",
         )
 
-    if journal not in JOURNAL_MAP:
+    if journal.lower().strip() not in JOURNAL_MAP:
         raise HTTPException(
             status_code=422,
-            detail=f"Unsupported journal '{journal}'. Choose from: {list(JOURNAL_MAP.keys())}",
+            detail=f"Unsupported journal '{journal}'. Choose from: {get_supported_journals()}",
         )
 
     content = await file.read()

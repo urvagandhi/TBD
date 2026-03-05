@@ -1,88 +1,136 @@
 {
   "style_name": "IEEE",
+
   "document": {
     "font": "Times New Roman",
     "font_size": 10,
     "line_spacing": 1.0,
-    "columns": 2,
     "margins": {
-      "top": 0.75,
-      "bottom": 1.0,
-      "left": 0.625,
-      "right": 0.625,
-      "unit": "inches"
-    }
+      "top": "0.75in",
+      "bottom": "1in",
+      "left": "0.625in",
+      "right": "0.625in"
+    },
+    "alignment": "justify",
+    "columns": 2
   },
+
+  "title_page": {
+    "title_case": "Title Case",
+    "title_bold": false,
+    "title_centered": true,
+    "title_font_size": 24
+  },
+
   "abstract": {
     "label": "Abstract",
     "label_bold": true,
     "label_centered": false,
     "label_italic": true,
     "max_words": 250,
-    "indent": false
+    "indent_first_line": false,
+    "keywords_present": true,
+    "keywords_label": "Index Terms\u2014",
+    "keywords_italic": false
   },
-  "keywords": {
-    "label": "Index Terms",
-    "label_italic": true,
-    "position": "after_abstract"
-  },
+
   "headings": {
     "H1": {
       "bold": false,
-      "centered": true,
       "italic": false,
+      "centered": true,
+      "underline": false,
       "case": "UPPERCASE",
-      "numbering": true,
-      "number_format": "Roman"
+      "numbering": "roman",
+      "font_size": 10
     },
     "H2": {
-      "bold": true,
-      "centered": false,
+      "bold": false,
       "italic": true,
+      "centered": false,
+      "underline": false,
       "case": "Title Case",
-      "numbering": true,
-      "number_format": "Alpha"
+      "numbering": "alpha",
+      "font_size": 10
     },
     "H3": {
       "bold": false,
-      "centered": false,
       "italic": true,
+      "centered": false,
+      "underline": false,
+      "indent": true,
       "case": "Title Case",
-      "numbering": true,
-      "number_format": "Numeric"
+      "numbering": "numeric",
+      "inline_with_text": true,
+      "font_size": 10
     }
   },
+
   "citations": {
     "style": "numbered",
-    "format": "[N]",
-    "one_author": "[N]",
-    "two_authors": "[N]",
-    "three_plus": "[N]",
-    "ordering": "appearance"
+    "brackets": "square",
+    "format_one_author": "[1]",
+    "format_two_authors": "[1]",
+    "format_three_plus": "[1]",
+    "format_numbered": "[N]",
+    "include_page_for_quotes": false,
+    "page_format": "p. 45"
   },
+
   "references": {
     "section_label": "References",
     "label_bold": false,
-    "label_centered": false,
-    "label_case": "UPPERCASE",
+    "label_centered": true,
+    "label_italic": false,
     "ordering": "appearance",
-    "hanging_indent": true,
-    "hanging_indent_inches": 0.25,
-    "journal_article_format": "[N] A. Author, \"Title of article,\" Journal Name, vol. X, no. Y, pp. ZZ-ZZ, Month Year.",
-    "doi_required": false
+    "hanging_indent": false,
+    "indent_size": "0.25in",
+    "line_spacing": 1.0,
+    "space_between_entries": false,
+    "formats": {
+      "journal_article": "[N] A. B. Author and C. D. Author, \"Title of article,\" Abbrev. Journal Name, vol. X, no. Y, pp. Z1\u2013Z2, Month Year, doi: 10.1109/xxxxx.",
+      "book": "[N] A. B. Author, Title of Book, Xth ed. City, Country: Publisher, Year.",
+      "book_chapter": "[N] A. B. Author, \"Title of chapter,\" in Title of Book, Xth ed., A. Editor, Ed. City, Country: Publisher, Year, pp. X\u2013Y.",
+      "website": "[N] A. B. Author. (Year, Month Day). Title. [Online]. Available: URL",
+      "conference_paper": "[N] A. B. Author, \"Title of paper,\" in Proc. Conference Name, City, Country, Year, pp. X\u2013Y."
+    }
   },
+
   "figures": {
-    "label_format": "Fig. N.",
+    "label_prefix": "Fig.",
     "label_bold": false,
+    "label_italic": false,
     "caption_position": "below",
     "caption_italic": false,
-    "label_case": "normal"
+    "caption_alignment": "center",
+    "numbering": "arabic",
+    "note_label": "Note."
   },
+
   "tables": {
-    "label_format": "TABLE N",
+    "label_prefix": "TABLE",
     "label_bold": true,
+    "label_italic": false,
     "caption_position": "above",
-    "borders": "full_grid",
-    "label_case": "UPPERCASE"
+    "caption_italic": false,
+    "caption_alignment": "center",
+    "numbering": "roman",
+    "border_style": "full_grid",
+    "note_label": "Note."
+  },
+
+  "equations": {
+    "numbering": "right_aligned",
+    "numbering_format": "(1)"
+  },
+
+  "general_rules": {
+    "doi_format": "doi: 10.1109/xxxxx",
+    "url_format": "Available: URL",
+    "date_format": "Month Year",
+    "et_al_threshold": 6,
+    "use_ampersand_in_citations": false,
+    "use_ampersand_in_references": false,
+    "oxford_comma": false
   }
 }

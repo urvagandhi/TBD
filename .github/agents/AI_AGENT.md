@@ -33,7 +33,7 @@ You build **reliable, deterministic, cost-efficient, and explainable** agentic s
 | Dimension | Classification |
 |-----------|---------------|
 | AI approach | Multi-agent LLM orchestration (NOT classical ML) |
-| Model type | GPT-4o-mini API (NOT trained/fine-tuned) |
+| Model type | Gemini 2.0 Flash via Google AI Studio (NOT trained/fine-tuned) |
 | Reasoning | Prompt-engineered chain-of-thought (temperature=0 for determinism) |
 | Orchestration | CrewAI sequential pipeline (5 agents) |
 | Knowledge base | Pre-built JSON rules files (NOT vector DB, NOT RAG) |
@@ -79,20 +79,18 @@ result = crew.kickoff(inputs={"paper_content": text, "journal_style": journal})
 
 ```python
 from crewai import Agent, Task, Crew, Process
-from langchain_openai import ChatOpenAI
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
-# Single shared LLM instance — all agents use same model
-llm = ChatOpenAI(
-    model="gpt-4o-mini",
-    api_key=os.getenv("OPENAI_API_KEY"),
-    temperature=0,           # DETERMINISTIC — critical for formatting tasks
-    max_tokens=4096,         # Always set — never leave unlimited
-    timeout=60,              # Per-call timeout
-)
+# LiteLLM (built into CrewAI) routes "gemini/<model>" to Google AI Studio.
+# Set GOOGLE_API_KEY from GEMINI_API_KEY so LiteLLM can authenticate.
+os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
+
+model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+# String format — NOT a LangChain object — required for LiteLLM routing
+llm = f"gemini/{model_name}"
 
 agent = Agent(
     role="<Specific Role>",
@@ -433,20 +431,16 @@ class ComplianceReport(BaseModel):
 
 ```python
 from crewai import Agent, Task, Crew, Process
-from langchain_openai import ChatOpenAI
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
-# Single LLM — all agents share it (cost efficiency)
-llm = ChatOpenAI(
-    model="gpt-4o-mini",
-    api_key=os.getenv("OPENAI_API_KEY"),
-    temperature=0,
-    max_tokens=4096,
-    timeout=60,
-)
+# LiteLLM string routing — do NOT use a LangChain object here.
+# Using ChatGoogleGenerativeAI would cause LiteLLM to route through Vertex AI ADC.
+os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
+model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+llm = f"gemini/{model_name}"
 
 def run_pipeline(paper_content: str, journal_style: str) -> dict:
     """
@@ -544,10 +538,10 @@ def extract_pdf_text(filepath: str) -> str:
 
 | Metric | Target |
 |--------|--------|
-| Cost per paper | < $0.05 (GPT-4o-mini rates) |
+| Cost per paper | Free tier via Google AI Studio (Gemini 2.0 Flash) |
 | Total tokens per pipeline | < 20,000 combined |
-| Caching | Cache identical paper+journal combos in-memory |
-| Model selection | GPT-4o-mini ONLY — never upgrade to GPT-4o unless justified |
+| Caching | Cache identical paper+journal combos in-memory + rule_loader cache |
+| Model selection | Gemini 2.0 Flash via LiteLLM string "gemini/gemini-2.0-flash" |
 
 ```python
 # Simple in-memory cache for development/demo
@@ -582,9 +576,12 @@ Before declaring the pipeline complete, verify:
 
 | Decision | Rationale |
 |----------|-----------|
-| GPT-4o-mini over GPT-4o | 10x cheaper, fast enough, sufficient quality for formatting |
+| Gemini 2.0 Flash via Google AI Studio | Free tier, fast, sufficient quality for formatting |
+| LiteLLM string format over LangChain | Avoids Vertex AI ADC routing — uses GOOGLE_API_KEY directly |
 | CrewAI sequential over parallel | Formatting requires ordered context — parse before transform |
 | Pre-built JSON rules over RAG | Deterministic, no vector DB dependency, hackathon-friendly |
+| FormatEngine + rule caching | Agents use engine layer instead of raw dicts; cache avoids disk reads |
+| JSON Schema validation on rules load | Catches malformed rules early — fail fast at startup |
 | No model training | Prompt engineering achieves needed accuracy for this task |
 | Synchronous pipeline | Simpler than async; 45s is acceptable for demo |
 | python-docx for output | Direct .docx manipulation, no conversion dependencies |

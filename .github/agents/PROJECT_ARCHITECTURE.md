@@ -53,9 +53,9 @@ description: Agent Paperpal — Autonomous Manuscript Formatting System. HackaMi
 | Frontend HTTP | Axios | latest |
 | Backend | FastAPI + Uvicorn | 0.111.0 / 0.29.0 |
 | Backend Language | Python 3.11+ | 3.11+ |
-| AI Brain | GPT-4o-mini via OpenAI API | gpt-4o-mini |
-| Agent Framework | CrewAI (sequential pipeline) | 0.28.0 |
-| LLM Client | langchain-openai | 0.1.6 |
+| AI Brain | Gemini 2.0 Flash via Google AI Studio | gemini-2.0-flash |
+| Agent Framework | CrewAI (sequential pipeline) | 0.36.0+ |
+| LLM Client | LiteLLM (built into CrewAI) — string format "gemini/gemini-2.0-flash" | built-in |
 | PDF Reading | PyMuPDF (fitz) | 1.24.0 |
 | DOCX Read/Write | python-docx | 1.1.0 |
 | File Upload | python-multipart | 0.0.9 |
@@ -93,9 +93,14 @@ paperpal-agent/
 │   │   ├── vancouver.json       ← Vancouver rules
 │   │   ├── springer.json        ← Springer rules
 │   │   └── chicago.json         ← Chicago rules
+│   ├── schemas/
+│   │   └── rules_schema.json    ← JSON Schema to validate rules/*.json
+│   ├── engine/
+│   │   ├── __init__.py
+│   │   └── format_engine.py     ← FormatEngine class + load_format_engine()
 │   ├── uploads/                 ← Temp uploaded files (git-ignored)
 │   ├── outputs/                 ← Formatted output DOCX files (git-ignored)
-│   ├── .env                     ← OPENAI_API_KEY (never commit)
+│   ├── .env                     ← GEMINI_API_KEY + GOOGLE_API_KEY (never commit)
 │   └── requirements.txt
 │
 ├── frontend/
