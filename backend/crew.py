@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import re
@@ -40,7 +41,54 @@ TRUNCATION_MARKER = (
     "\n\n[... CONTENT TRUNCATED FOR PROCESSING — REFERENCES SECTION BELOW ...]\n\n"
 )
 
+# In-memory pipeline cache: identical (paper, journal) pairs return instantly
+PIPELINE_CACHE: dict = {}
+
 _STEP_NAMES = ["INGEST", "PARSE", "INTERPRET", "TRANSFORM", "VALIDATE"]
+
+
+def _hash_content(paper_text: str, journal: str) -> str:
+    """SHA-256 fingerprint of (paper_text + journal) for cache keying."""
+    payload = f"{journal}::{paper_text}"
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _extract_first_json_block(text: str) -> str | None:
+    """
+    Balanced-bracket extraction of the first complete JSON object or array.
+
+    Instead of a greedy regex that can match the wrong closing bracket,
+    this tracks bracket depth character-by-character, correctly handling
+    nested objects and quoted strings.
+
+    Returns the JSON substring on success, None if no valid block found.
+    """
+    for open_ch, close_ch in [('{', '}'), ('[', ']')]:
+        start = text.find(open_ch)
+        if start == -1:
+            continue
+        depth = 0
+        in_string = False
+        escape_next = False
+        for i, ch in enumerate(text[start:], start=start):
+            if escape_next:
+                escape_next = False
+                continue
+            if ch == '\\' and in_string:
+                escape_next = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == open_ch:
+                depth += 1
+            elif ch == close_ch:
+                depth -= 1
+                if depth == 0:
+                    return text[start:i + 1]
+    return None
 
 
 def extract_json_from_llm(raw: str) -> dict:
@@ -66,6 +114,13 @@ def extract_json_from_llm(raw: str) -> dict:
 
     text = raw.strip()
 
+    # Improvement 2: LLM output size guard — disabled (may truncate valid large outputs)
+    # MAX_LLM_RESPONSE = 200_000
+    # if len(raw) > MAX_LLM_RESPONSE:
+    #     raise LLMResponseError(
+    #         f"LLM response exceeds safe size ({len(raw):,} chars > {MAX_LLM_RESPONSE:,})"
+    #     )
+
     # Step 1: Remove markdown code fences (```json...```, ```...```, ~~~...~~~)
     text = re.sub(r"^```(?:json)?\s*\n?", "", text, flags=re.MULTILINE)
     text = re.sub(r"\n?```\s*$", "", text, flags=re.MULTILINE)
@@ -73,11 +128,10 @@ def extract_json_from_llm(raw: str) -> dict:
     text = re.sub(r"\n?~~~\s*$", "", text, flags=re.MULTILINE)
     text = text.strip()
 
-    # Step 2: Extract outermost JSON object or array
-    # Handles Format 4 (preamble) and Format 5 (trailing text)
-    json_match = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", text)
-    if json_match:
-        text = json_match.group(1)
+    # Step 2: Balanced bracket extraction — handles preamble and trailing text
+    extracted = _extract_first_json_block(text)
+    if extracted:
+        text = extracted
 
     # Step 3: Fix trailing commas before } or ]
     text = re.sub(r",(\s*[}\]])", r"\1", text)
@@ -125,11 +179,12 @@ def _truncate_paper(content: str) -> str:
 
 
 class _StepTimer:
-    """Logs the name and wall-clock duration of each CrewAI task as it completes."""
+    """Logs wall-clock duration of each CrewAI task and accumulates stage_times."""
 
     def __init__(self) -> None:
         self._step_index = 0
         self._step_start = time.time()
+        self.stage_times: dict = {}
 
     def on_task_complete(self, output) -> None:
         elapsed = round(time.time() - self._step_start, 2)
@@ -138,12 +193,41 @@ class _StepTimer:
             if self._step_index < len(_STEP_NAMES)
             else f"Step {self._step_index + 1}"
         )
+        self.stage_times[name.lower()] = elapsed
         logger.info(
             "[PIPELINE] Step %d/5 — %-10s completed in %.2fs",
             self._step_index + 1, name, elapsed,
         )
         self._step_index += 1
         self._step_start = time.time()
+
+
+def _validate_task_outputs(crew: Crew) -> None:
+    """
+    Central pipeline guard — validate all 5 task outputs after crew.kickoff().
+
+    Checks each task produced meaningful output with required keys.
+    Raises TransformError immediately on any failure to surface silent CrewAI failures.
+    """
+    validations = [
+        (0, "ingest",    lambda o: bool(o and o.strip())),
+        (1, "parse",     lambda o: '"sections"' in o or "'sections'" in o),
+        (2, "interpret", lambda o: bool(o and len(o.strip()) > 10)),
+        (3, "transform", lambda o: '"docx_instructions"' in o or "'docx_instructions'" in o),
+        (4, "validate",  lambda o: '"overall_score"' in o or "'overall_score'" in o),
+    ]
+    for idx, name, check in validations:
+        try:
+            raw = _get_task_output(crew, idx)
+        except TransformError as e:
+            raise TransformError(f"Pipeline task '{name}' (step {idx + 1}) produced no output: {e}")
+        if not check(raw):
+            snippet = (raw[:200] + "...") if len(raw) > 200 else raw
+            raise TransformError(
+                f"Pipeline task '{name}' (step {idx + 1}) failed validation. "
+                f"Output snippet: {snippet!r}"
+            )
+        logger.debug("[PIPELINE] Task '%s' output validated OK (%d chars)", name, len(raw))
 
 
 def run_pipeline(paper_content: str, journal_style: str) -> dict:
@@ -161,6 +245,8 @@ def run_pipeline(paper_content: str, journal_style: str) -> dict:
         dict with keys:
             - compliance_report: Full compliance report with scores
             - docx_filename: Filename of the generated DOCX in outputs/
+            - output_metadata: {filename, size_bytes, size_kb}
+            - pipeline_metrics: {stage_times, total_runtime}
 
     Raises:
         ParseError: If paper_content is too short to process.
@@ -183,10 +269,20 @@ def run_pipeline(paper_content: str, journal_style: str) -> dict:
     paper_content = _truncate_paper(paper_content)
     truncated = len(paper_content) < original_len
 
+    # ── Improvement 7: Cache check — return instantly for identical submissions ──
+    cache_key = _hash_content(paper_content, journal_style)
+    if cache_key in PIPELINE_CACHE:
+        logger.info(
+            "[PIPELINE] Cache HIT — journal=%s hash=%s (returning cached result)",
+            journal_style, cache_key[:12],
+        )
+        return PIPELINE_CACHE[cache_key]
+
     logger.info(
-        "[PIPELINE] Starting — journal=%s chars=%d%s",
+        "[PIPELINE] Starting — journal=%s chars=%d%s cache_miss=%s",
         journal_style, len(paper_content),
         f" (truncated from {original_len})" if truncated else "",
+        cache_key[:12],
     )
     pipeline_start = time.time()
 
@@ -324,6 +420,11 @@ def run_pipeline(paper_content: str, journal_style: str) -> dict:
     result = crew.kickoff()
     raw_output = str(result)
 
+    # Improvement 1: Validate all task outputs before proceeding
+    logger.info("[PIPELINE] Validating all task outputs...")
+    _validate_task_outputs(crew)
+    logger.info("[PIPELINE] All task outputs validated OK")
+
     logger.info("[PIPELINE] All steps complete — parsing compliance report...")
     compliance_report = _parse_compliance_report(raw_output)
     overall_score = compliance_report.get("overall_score", "N/A")
@@ -338,15 +439,37 @@ def run_pipeline(paper_content: str, journal_style: str) -> dict:
     logger.info("[PIPELINE] DOCX written — file=%s in %.2fs", docx_filename, time.time() - t0)
 
     total_elapsed = round(time.time() - pipeline_start, 1)
+
+    # Improvement 4: Stage timing metrics for demo visibility
+    pipeline_metrics = {
+        "stage_times": step_timer.stage_times,
+        "total_runtime": total_elapsed,
+    }
+
+    # Improvement 6: Output file metadata for frontend display
+    output_path = OUTPUT_DIR / docx_filename
+    file_size = output_path.stat().st_size if output_path.exists() else 0
+    output_metadata = {
+        "filename": docx_filename,
+        "size_bytes": file_size,
+        "size_kb": round(file_size / 1024, 1),
+    }
+
     logger.info(
-        "[PIPELINE] Done — score=%s docx=%s total=%.1fs",
-        overall_score, docx_filename, total_elapsed,
+        "[PIPELINE] Done — score=%s docx=%s size=%sKB total=%.1fs",
+        overall_score, docx_filename, output_metadata["size_kb"], total_elapsed,
     )
 
-    return {
+    pipeline_result = {
         "compliance_report": compliance_report,
         "docx_filename": docx_filename,
+        "output_metadata": output_metadata,
+        "pipeline_metrics": pipeline_metrics,
     }
+
+    # Improvement 7: Cache for instant re-runs of identical submissions
+    PIPELINE_CACHE[cache_key] = pipeline_result
+    return pipeline_result
 
 
 def _get_task_output(crew: Crew, task_index: int) -> str:
@@ -366,6 +489,7 @@ def _get_task_output(crew: Crew, task_index: int) -> str:
     try:
         task = crew.tasks[task_index]
         output = task.output
+        logger.debug("[PIPELINE] Task[%d] output type: %s", task_index, type(output).__name__)
         if output is None:
             raise TransformError(
                 f"Task at index {task_index} produced no output. "
@@ -375,6 +499,8 @@ def _get_task_output(crew: Crew, task_index: int) -> str:
             return output.raw
         if hasattr(output, "result"):
             return output.result
+        if hasattr(output, "output"):
+            return output.output
         return str(output)
     except IndexError:
         raise TransformError(

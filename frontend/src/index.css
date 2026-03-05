@@ -4,11 +4,8 @@
 
 @layer base {
   html {
-    @apply bg-slate-50 text-gray-900;
-  }
-
-  html.dark {
-    @apply bg-gray-950 text-gray-100;
+    @apply bg-gray-950 text-white;
+    scroll-behavior: smooth;
   }
 
   body {
@@ -38,25 +35,42 @@
     background-color: #374151;
     border-radius: 3px;
   }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: #4b5563;
+  }
 }
 
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+/* ── Keyframes ─────────────────────────────────────────────────────────── */
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
-@keyframes fillBar {
-  from { width: 0%; }
-  to { width: var(--bar-width, 0%); }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+
+@keyframes fillBar {
+  from { width: 0%; }
+  to   { width: var(--bar-width, 0%); }
+}
+
+/* ── Utility classes ───────────────────────────────────────────────────── */
+
+.animate-fade-in {
+  animation: fadeIn 0.35s ease-out both;
 }
 
 .animate-shimmer {
@@ -65,10 +79,7 @@
   animation: shimmer 2s infinite;
 }
 
-.animate-fade-in {
-  animation: fadeIn 0.4s ease-out both;
-}
-
-.score-bar {
-  animation: fillBar 1s ease-out forwards;
+/* Score bar — triggered via inline style + Tailwind transition */
+.score-bar-fill {
+  transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
 }

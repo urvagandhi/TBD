@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -11,6 +12,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 load_dotenv(override=True)
+
+_API_START_TIME = time.time()
+MAX_PIPELINE_RUNTIME = 300  # seconds — log warning if pipeline exceeds this
 
 # ---------------------------------------------------------------------------
 # Logging — configure root logger once at process start
@@ -61,7 +65,26 @@ OUTPUTS_DIR.mkdir(exist_ok=True)
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 MIN_TEXT_LENGTH = 100
+MIN_ALPHA_RATIO = 0.3  # Minimum ratio of alphabetic chars — rejects garbled/scanned text
 ALLOWED_EXTENSIONS = {"pdf", "docx"}
+
+
+# ---------------------------------------------------------------------------
+# Improvement 10 — Cleanup stale output files on startup
+# ---------------------------------------------------------------------------
+def _cleanup_old_outputs(hours: int = 6) -> None:
+    """Delete DOCX files in outputs/ older than `hours` hours."""
+    cutoff = time.time() - hours * 3600
+    removed = 0
+    for f in OUTPUTS_DIR.glob("*.docx"):
+        try:
+            if f.stat().st_mtime < cutoff:
+                f.unlink(missing_ok=True)
+                removed += 1
+        except Exception:
+            pass
+    if removed:
+        logger.info("[CLEANUP] Removed %d stale output file(s) older than %dh", removed, hours)
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +117,7 @@ async def startup_event() -> None:
         logger.error("GEMINI_API_KEY not set in environment! LLM calls will fail.")
     else:
         logger.info("GEMINI_API_KEY: set \u2713")
+    _cleanup_old_outputs(hours=6)
     logger.info("=" * 50)
 
 
@@ -116,14 +140,34 @@ def _sanitize_filename(filename: str) -> str:
 # ---------------------------------------------------------------------------
 @app.get("/health")
 async def health() -> dict:
-    """Health check — returns API status and supported journals."""
-    logger.info("[HEALTH] GET /health — service ok")
+    """Health check — returns API status, diagnostics, and supported journals."""
+    rules_dir = Path(__file__).parent / "rules"
+    outputs_writable = os.access(OUTPUTS_DIR, os.W_OK)
+    rules_exists = rules_dir.exists()
+    status = "ok" if (outputs_writable and rules_exists) else "degraded"
+
+    try:
+        import crewai
+        crewai_version = crewai.__version__
+    except Exception:
+        crewai_version = "unknown"
+
+    logger.info("[HEALTH] GET /health — status=%s", status)
     return {
-        "status": "ok",
+        "status": status,
         "version": "1.0.0",
         "service": "Agent Paperpal",
         "supported_journals": get_supported_journals(),
         "max_file_size_mb": MAX_FILE_SIZE // (1024 * 1024),
+        "system_info": {
+            "python_version": sys.version.split()[0],
+            "crewai_version": crewai_version,
+            "api_uptime_seconds": round(time.time() - _API_START_TIME, 1),
+        },
+        "diagnostics": {
+            "rules_folder_exists": rules_exists,
+            "outputs_folder_writable": outputs_writable,
+        },
     }
 
 
@@ -194,7 +238,9 @@ async def format_document(
 
     logger.info("[REQUEST:%s] File accepted — size=%sKB type=%s", request_id, size_kb, ext.upper())
 
-    upload_filename = f"{uuid.uuid4().hex}_{file.filename}"
+    # Improvement 12: Sanitize filename — strip unsafe chars before writing to disk
+    safe_name = re.sub(r"[^a-zA-Z0-9._\-]", "_", file.filename or "upload")
+    upload_filename = f"{request_id}_{safe_name}"
     upload_path = UPLOADS_DIR / upload_filename
 
     try:
@@ -230,8 +276,33 @@ async def format_document(
                 },
             )
 
+        # ── Validation 5: Text quality check (Improvement 16) ────────────────
+        stripped = paper_text.strip()
+        total_chars = len(stripped)
+        if total_chars > 0:
+            alpha_ratio = sum(c.isalpha() for c in stripped) / total_chars
+            if alpha_ratio < MIN_ALPHA_RATIO:
+                logger.warning(
+                    "[REQUEST:%s] Rejected — low alpha ratio %.2f (possible garbled/scanned text)",
+                    request_id, alpha_ratio,
+                )
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "success": False,
+                        "error": (
+                            "Extracted text appears corrupted or is primarily non-alphabetic. "
+                            "Ensure the document contains readable text (not scanned/image-only)."
+                        ),
+                        "step": "extraction",
+                    },
+                )
+
         # ── Pipeline execution ───────────────────────────────────────────────
-        logger.info("[REQUEST:%s] Starting CrewAI pipeline — journal=%s", request_id, journal)
+        logger.info(
+            "[REQUEST:%s] Starting CrewAI pipeline — journal=%s chars=%d",
+            request_id, journal, len(paper_text),
+        )
         start = time.time()
 
         result = run_pipeline(paper_text, journal)
@@ -240,10 +311,20 @@ async def format_document(
         docx_filename = result["docx_filename"]
         compliance_report = result["compliance_report"]
         overall_score = compliance_report.get("overall_score", "N/A")
+        output_metadata = result.get("output_metadata", {})
+        pipeline_metrics = result.get("pipeline_metrics", {})
+
+        # Improvement 8: warn if pipeline exceeded expected runtime
+        if elapsed > MAX_PIPELINE_RUNTIME:
+            logger.warning(
+                "[REQUEST:%s] Pipeline runtime exceeded limit — %.1fs > %ds",
+                request_id, elapsed, MAX_PIPELINE_RUNTIME,
+            )
 
         logger.info(
-            "[REQUEST:%s] Pipeline complete — score=%s docx=%s total=%.1fs",
-            request_id, overall_score, docx_filename, elapsed,
+            "[REQUEST:%s] Pipeline complete — score=%s docx=%s size=%sKB total=%.1fs",
+            request_id, overall_score, docx_filename,
+            output_metadata.get("size_kb", "?"), elapsed,
         )
 
         return JSONResponse(
@@ -255,6 +336,8 @@ async def format_document(
                 "compliance_report": compliance_report,
                 "changes_made": compliance_report.get("changes_made", []),
                 "processing_time_seconds": elapsed,
+                "output_metadata": output_metadata,
+                "pipeline_metrics": pipeline_metrics,
             },
         )
 
