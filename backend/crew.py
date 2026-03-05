@@ -1,5 +1,4 @@
 import json
-import logging
 import os
 import re
 import time
@@ -8,7 +7,9 @@ from pathlib import Path
 
 from crewai import Crew, Process, Task
 
-logger = logging.getLogger(__name__)
+from tools.logger import get_logger
+
+logger = get_logger(__name__)
 
 from agents import (
     create_ingest_agent,

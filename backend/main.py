@@ -12,20 +12,23 @@ from fastapi.responses import FileResponse
 load_dotenv(override=True)
 
 # ---------------------------------------------------------------------------
-# Logging — configure once at process start
+# Logging — configure root logger once at process start (covers third-party
+# libs like uvicorn and crewai); app modules use get_logger(__name__) instead.
 # ---------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(levelname)-8s | %(message)s",
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-logger = logging.getLogger(__name__)
 
 from crew import run_pipeline
+from tools.logger import get_logger
 from tools.pdf_reader import extract_pdf_text
 from tools.docx_reader import extract_docx_text
 from tools.rule_loader import JOURNAL_MAP, get_supported_journals
 from tools.tool_errors import ToolError
+
+logger = get_logger(__name__)
 
 app = FastAPI(
     title="Agent Paperpal API",
