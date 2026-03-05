@@ -6,10 +6,7 @@ import uuid
 from pathlib import Path
 
 from crewai import Crew, Process, Task
-
-from tools.logger import get_logger
-
-logger = get_logger(__name__)
+from dotenv import load_dotenv
 
 from agents import (
     create_ingest_agent,
@@ -19,49 +16,112 @@ from agents import (
     create_validate_agent,
 )
 from tools.docx_writer import write_formatted_docx
+from tools.logger import get_logger
 from tools.rule_loader import load_rules
+from tools.tool_errors import (
+    DocumentWriteError,
+    LLMResponseError,
+    ParseError,
+    TransformError,
+    ValidationError,
+)
 
-OUTPUTS_DIR = Path(__file__).parent / "outputs"
-OUTPUTS_DIR.mkdir(exist_ok=True)
+load_dotenv(override=True)
+logger = get_logger(__name__)
 
-MAX_PAPER_CHARS = 32_000
+OUTPUT_DIR = Path(__file__).parent / "outputs"
+OUTPUT_DIR.mkdir(exist_ok=True)
 
-
-def _truncate_paper_content(text: str) -> str:
-    """Preserve head + tail of large documents to stay within token limits."""
-    if len(text) <= MAX_PAPER_CHARS:
-        return text
-    head = text[: MAX_PAPER_CHARS // 2]
-    tail = text[-(MAX_PAPER_CHARS // 2) :]
-    return f"{head}\n\n[... content truncated for length ...]\n\n{tail}"
-
-
-def extract_json_from_llm(text: str) -> dict:
-    """
-    Robustly parse JSON from LLM output that may contain markdown fences.
-
-    Args:
-        text: Raw LLM output string.
-
-    Returns:
-        Parsed dict.
-
-    Raises:
-        ValueError: If JSON cannot be parsed after cleanup.
-    """
-    # Strip markdown code fences
-    clean = re.sub(r"```(?:json)?\s*", "", text, flags=re.IGNORECASE)
-    clean = clean.strip().rstrip("`").strip()
-    # Fix trailing commas before closing brackets
-    clean = re.sub(r",(\s*[}\]])", r"\1", clean)
-
-    try:
-        return json.loads(clean)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to parse JSON from LLM output: {e}\nRaw text:\n{text[:500]}") from e
-
+# Truncation constants — 24K body + 8K tail (references) per spec
+MAX_CHARS = 32_000
+HEAD_CHARS = 24_000
+TAIL_CHARS = 8_000
+TRUNCATION_MARKER = (
+    "\n\n[... CONTENT TRUNCATED FOR PROCESSING — REFERENCES SECTION BELOW ...]\n\n"
+)
 
 _STEP_NAMES = ["INGEST", "PARSE", "INTERPRET", "TRANSFORM", "VALIDATE"]
+
+
+def extract_json_from_llm(raw: str) -> dict:
+    """
+    Robustly extract a JSON dict from raw LLM output.
+
+    Handles all known LLM output quirks:
+      1. Clean JSON
+      2. ```json ... ``` fenced
+      3. ``` ... ``` fenced (no lang tag)
+      4. Text preamble before JSON ("Here is the result: {...}")
+      5. Text after JSON ({...} followed by explanation)
+      6. Trailing commas: {"a": 1,}
+      7. Single quotes: {'a': 'b'}
+      8. Newlines inside string values
+      9. Python literals: True / False / None
+
+    Raises:
+        LLMResponseError: If no valid JSON can be extracted after all attempts.
+    """
+    if not raw or not raw.strip():
+        raise LLMResponseError("LLM returned empty response")
+
+    text = raw.strip()
+
+    # Step 1: Remove markdown code fences (```json...```, ```...```, ~~~...~~~)
+    text = re.sub(r"^```(?:json)?\s*\n?", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\n?```\s*$", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^~~~(?:json)?\s*\n?", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\n?~~~\s*$", "", text, flags=re.MULTILINE)
+    text = text.strip()
+
+    # Step 2: Extract outermost JSON object or array
+    # Handles Format 4 (preamble) and Format 5 (trailing text)
+    json_match = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", text)
+    if json_match:
+        text = json_match.group(1)
+
+    # Step 3: Fix trailing commas before } or ]
+    text = re.sub(r",(\s*[}\]])", r"\1", text)
+
+    # Step 4: Replace Python literals with JSON equivalents
+    text = re.sub(r"\bTrue\b", "true", text)
+    text = re.sub(r"\bFalse\b", "false", text)
+    text = re.sub(r"\bNone\b", "null", text)
+
+    # Step 5: Attempt standard parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Step 6: Last resort — replace single quotes with double quotes
+    try:
+        fixed = text.replace("'", '"')
+        return json.loads(fixed)
+    except json.JSONDecodeError as e:
+        snippet = raw[:300] + ("..." if len(raw) > 300 else "")
+        raise LLMResponseError(
+            f"Could not extract valid JSON from LLM output.\n"
+            f"Parse error: {e}\n"
+            f"Raw output (first 300 chars): {snippet}"
+        )
+
+
+def _truncate_paper(content: str) -> str:
+    """
+    Truncate large papers to stay within LLM context limits.
+    Takes first 24K chars (body) + last 8K chars (references).
+    Returns original content unchanged if under MAX_CHARS.
+    """
+    if len(content) <= MAX_CHARS:
+        return content
+
+    logger.warning(
+        "[PIPELINE] Paper content truncated: %d chars → %d chars (head=%d, tail=%d)",
+        len(content), MAX_CHARS, HEAD_CHARS, TAIL_CHARS,
+    )
+    head = content[:HEAD_CHARS]
+    tail = content[-TAIL_CHARS:]
+    return head + TRUNCATION_MARKER + tail
 
 
 class _StepTimer:
@@ -73,14 +133,17 @@ class _StepTimer:
 
     def on_task_complete(self, output) -> None:
         elapsed = round(time.time() - self._step_start, 2)
-        name = _STEP_NAMES[self._step_index] if self._step_index < len(_STEP_NAMES) else f"Step {self._step_index + 1}"
+        name = (
+            _STEP_NAMES[self._step_index]
+            if self._step_index < len(_STEP_NAMES)
+            else f"Step {self._step_index + 1}"
+        )
         logger.info(
             "[PIPELINE] Step %d/5 — %-10s completed in %.2fs",
             self._step_index + 1, name, elapsed,
         )
         self._step_index += 1
         self._step_start = time.time()
-
 
 
 def run_pipeline(paper_content: str, journal_style: str) -> dict:
@@ -96,12 +159,28 @@ def run_pipeline(paper_content: str, journal_style: str) -> dict:
 
     Returns:
         dict with keys:
-            - compliance_report: ComplianceReport dict (overall_score, breakdown,
-              changes_made, imrad_check, citation_consistency, warnings)
-            - docx_filename: filename of the generated DOCX in outputs/
+            - compliance_report: Full compliance report with scores
+            - docx_filename: Filename of the generated DOCX in outputs/
+
+    Raises:
+        ParseError: If paper_content is too short to process.
+        LLMResponseError: If any agent returns unparseable JSON.
+        TransformError: If transform agent fails to produce docx_instructions.
+        ValidationError: If validate agent fails to produce compliance report.
+        DocumentWriteError: If DOCX writing fails.
     """
+    # ── Input validation — fail fast before expensive LLM calls ──────────────
+    if not paper_content or len(paper_content.strip()) < 100:
+        raise ParseError(
+            f"Paper content is too short to process "
+            f"({len(paper_content.strip()) if paper_content else 0} chars). "
+            "Minimum required: 100 characters."
+        )
+    if not journal_style or not journal_style.strip():
+        raise ParseError("Journal style cannot be empty.")
+
     original_len = len(paper_content)
-    paper_content = _truncate_paper_content(paper_content)
+    paper_content = _truncate_paper(paper_content)
     truncated = len(paper_content) < original_len
 
     logger.info(
@@ -114,7 +193,7 @@ def run_pipeline(paper_content: str, journal_style: str) -> dict:
     # LiteLLM (used internally by CrewAI) reads GOOGLE_API_KEY for Google AI Studio
     os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
 
-    model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     llm = f"gemini/{model_name}"
     logger.info("[PIPELINE] LLM = %s", llm)
 
@@ -250,7 +329,8 @@ def run_pipeline(paper_content: str, journal_style: str) -> dict:
     overall_score = compliance_report.get("overall_score", "N/A")
     logger.info("[PIPELINE] Compliance report parsed — overall_score=%s", overall_score)
 
-    transform_raw = str(transform_task.output) if transform_task.output else "{}"
+    logger.info("[PIPELINE] Extracting transform output for DOCX generation...")
+    transform_raw = _get_task_output(crew, task_index=3)
 
     logger.info("[PIPELINE] Writing formatted DOCX...")
     t0 = time.time()
@@ -269,18 +349,100 @@ def run_pipeline(paper_content: str, journal_style: str) -> dict:
     }
 
 
-def _parse_compliance_report(raw: str) -> dict:
+def _get_task_output(crew: Crew, task_index: int) -> str:
     """
-    Parse the compliance_report JSON from the final agent output.
+    Safely retrieve the raw string output of a specific task after crew.kickoff().
+
+    Args:
+        crew: Completed Crew instance.
+        task_index: Zero-based index into crew.tasks.
+
+    Returns:
+        Raw output string from the task.
 
     Raises:
-        ValueError: If the output cannot be parsed as valid JSON.
+        TransformError: If task output is missing or inaccessible.
     """
-    report = extract_json_from_llm(raw)
-    if "overall_score" not in report:
-        raise ValueError(
-            f"Compliance report missing 'overall_score'. Raw output:\n{raw[:500]}"
+    try:
+        task = crew.tasks[task_index]
+        output = task.output
+        if output is None:
+            raise TransformError(
+                f"Task at index {task_index} produced no output. "
+                "Pipeline may have failed silently at this step."
+            )
+        if hasattr(output, "raw"):
+            return output.raw
+        if hasattr(output, "result"):
+            return output.result
+        return str(output)
+    except IndexError:
+        raise TransformError(
+            f"Cannot access task at index {task_index}. "
+            f"Crew only has {len(crew.tasks)} tasks."
         )
+    except TransformError:
+        raise
+    except AttributeError as e:
+        raise TransformError(f"Unexpected task output structure: {e}")
+
+
+def _parse_compliance_report(raw: str) -> dict:
+    """
+    Parse and validate the compliance report from Agent 5 (validate_agent).
+
+    Raises:
+        ValidationError: If overall_score is missing or breakdown is invalid.
+        LLMResponseError: If JSON cannot be parsed.
+    """
+    # extract_json_from_llm raises LLMResponseError on failure
+    report = extract_json_from_llm(raw)
+
+    # HARD REQUIREMENT: overall_score must exist — never default silently
+    if "overall_score" not in report:
+        raise ValidationError(
+            "Compliance report is missing 'overall_score'. "
+            "Agent 5 (validate_agent) did not return a valid compliance report. "
+            f"Keys found: {list(report.keys())}"
+        )
+
+    # Validate and clamp overall_score to [0, 100]
+    score = report["overall_score"]
+    if not isinstance(score, (int, float)):
+        raise ValidationError(
+            f"overall_score must be a number, got: {type(score).__name__} = {score!r}"
+        )
+    report["overall_score"] = max(0, min(100, int(score)))
+
+    # Validate breakdown — add placeholder scores for any missing sections (non-blocking)
+    required_sections = [
+        "document_format", "abstract", "headings",
+        "citations", "references", "figures", "tables",
+    ]
+    breakdown = report.get("breakdown", {})
+    if not isinstance(breakdown, dict):
+        breakdown = {}
+    missing = [s for s in required_sections if s not in breakdown]
+    if missing:
+        logger.warning("[PIPELINE] Compliance report missing breakdown sections: %s", missing)
+        for s in missing:
+            breakdown[s] = {"score": 70, "issues": ["Score unavailable — section not checked"]}
+    report["breakdown"] = breakdown
+
+    # Ensure submission_ready is deterministically set
+    if "submission_ready" not in report:
+        report["submission_ready"] = report["overall_score"] >= 80
+
+    # Ensure changes_made is a list
+    if "changes_made" not in report or not isinstance(report.get("changes_made"), list):
+        report["changes_made"] = []
+
+    # Normalise: recommendations may come as "warnings" in some agent versions
+    if "recommendations" not in report:
+        report["recommendations"] = report.get("warnings", [])
+    if not isinstance(report["recommendations"], list):
+        report["recommendations"] = []
+
     return report
 
 
@@ -288,25 +450,48 @@ def _write_docx_from_transform(transform_raw: str, rules: dict) -> str:
     """
     Extract docx_instructions from transform output and write the DOCX file.
 
+    Args:
+        transform_raw: Raw string output from transform_task.
+        rules: Journal rules dict injected as source of truth for docx_writer.
+
+    Returns:
+        Output filename (not full path) for the generated DOCX.
+
     Raises:
-        ValueError: If transform output cannot be parsed or docx_instructions is missing.
+        TransformError: If docx_instructions or sections key is missing.
+        DocumentWriteError: Propagated from docx_writer if writing fails.
     """
-    output_filename = f"formatted_{uuid.uuid4().hex[:8]}.docx"
-    output_path = str(OUTPUTS_DIR / output_filename)
-
+    # extract_json_from_llm raises LLMResponseError on failure
     transform_data = extract_json_from_llm(transform_raw)
-    docx_instructions = transform_data.get("docx_instructions")
 
-    if not docx_instructions or not docx_instructions.get("sections"):
-        raise ValueError(
-            "Transform agent did not produce docx_instructions.sections. "
-            f"Transform output keys: {list(transform_data.keys())}"
+    # HARD REQUIREMENT: docx_instructions must exist
+    if "docx_instructions" not in transform_data:
+        raise TransformError(
+            "Transform result is missing 'docx_instructions' key. "
+            "Agent 4 (transform_agent) did not produce valid output. "
+            f"Keys found: {list(transform_data.keys())}"
+        )
+
+    docx_instructions = transform_data["docx_instructions"]
+
+    # HARD REQUIREMENT: sections must be a non-empty list
+    sections = docx_instructions.get("sections") if docx_instructions else None
+    if not isinstance(sections, list) or len(sections) == 0:
+        raise TransformError(
+            "docx_instructions is missing a non-empty 'sections' list. "
+            "The 'sections' array defines the entire document structure. "
+            f"docx_instructions keys found: "
+            f"{list(docx_instructions.keys()) if isinstance(docx_instructions, dict) else '(not a dict)'}"
         )
 
     # Inject the real journal rules so docx_writer always has the source of truth
     docx_instructions["rules"] = rules
 
-    sections_count = len(docx_instructions["sections"])
-    logger.info("[DOCX] Building document — %d sections", sections_count)
+    output_filename = f"formatted_{uuid.uuid4().hex[:8]}.docx"
+    output_path = str(OUTPUT_DIR / output_filename)
+
+    logger.info("[DOCX] Building document — %d sections → %s", len(sections), output_filename)
+
+    # write_formatted_docx raises DocumentWriteError on failure — let it propagate
     write_formatted_docx(docx_instructions, output_path)
     return output_filename

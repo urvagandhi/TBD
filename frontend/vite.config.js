@@ -11,9 +11,9 @@ export default defineConfig(({ mode }) => {
     server: {
       port,
       proxy: {
-        "/format": backendUrl,
-        "/download": backendUrl,
-        "/health": backendUrl,
+        "/format": { target: backendUrl, timeout: 0 },
+        "/download": { target: backendUrl, timeout: 0 },
+        "/health": { target: backendUrl, timeout: 0 },
       },
     },
   };

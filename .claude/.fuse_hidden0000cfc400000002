@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /media/urva/Personal/Technical/Project/Hackathons/HACKa-MINed/backend -name \"__pycache__\" -type d -exec rm -rf {} +)",
+      "Bash(python3 -m venv venv)",
+      "Bash(venv/bin/pip install --upgrade pip -q)",
+      "Bash(venv/bin/pip install -r requirements.txt)",
+      "Bash(/media/urva/Personal/Technical/Project/Hackathons/HACKa-MINed/backend/.env:*)",
+      "Bash(/media/urva/Personal/Technical/Project/Hackathons/HACKa-MINed/backend/.env.example:*)",
+      "Bash(/media/urva/Personal/Technical/Project/Hackathons/HACKa-MINed/frontend/.env:*)",
+      "Bash(/media/urva/Personal/Technical/Project/Hackathons/HACKa-MINed/frontend/.env.example:*)",
+      "Bash(/media/urva/Personal/Technical/Project/Hackathons/HACKa-MINed/backend/venv/bin/python -c \"import dotenv; print\\(''dotenv OK''\\)\")",
+      "Bash(venv/bin/python -m uvicorn main:app --reload --port 8000)",
+      "Bash(curl -s http://localhost:8000/health)",
+      "Bash(ls venv/bin/python*)",
+      "Bash(ls /media/urva/Personal/Technical/Project/Hackathons/HACKa-MINed/backend/venv/bin/python*)",
+      "Read(//tmp/**)",
+      "Bash(venv/bin/pip show litellm)",
+      "Bash(venv/bin/python -c \"import litellm; print\\(litellm.get_llm_provider\\(''gemini/gemini-2.0-flash''\\)\\)\")",
+      "Bash(venv/bin/python -c \":*)",
+      "Bash(venv/bin/python tools/rule_loader.py)",
+      "Bash(venv/bin/python engine/format_engine.py)",
+      "Bash(source venv/bin/activate)",
+      "Bash(python3 -c \":*)",
+      "Bash(git rm DETAILED_PROMPT.md)",
+      "Bash(python -c \":*)",
+      "Bash(pip install -q google-generativeai)",
+      "Bash(source .venv/bin/activate)",
+      "Bash(venv/bin/pip install google-generativeai)",
+      "Bash(venv/bin/python3 -c \":*)",
+      "Bash(venv/bin/pip install google-genai)",
+      "Bash(venv/bin/python3 -c \"import litellm; print\\(litellm.__version__\\)\")",
+      "Bash(GOOGLE_API_KEY=AIzaSyBgs5v4DOKBt6oj7gC14x-ULNUAkAdd6m0 venv/bin/python3 -c \":*)"
+    ]
+  }
+}

@@ -81,7 +81,7 @@ export default function App() {
     try {
       const response = await axios.post("/format", formData, {
         headers: { "Content-Type": "multipart/form-data" },
-        timeout: 120_000,
+        timeout: 0,
       });
 
       const data = response.data;
