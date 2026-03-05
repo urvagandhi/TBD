@@ -1,10 +1,14 @@
 import json
+import logging
 import os
 import re
+import time
 import uuid
 from pathlib import Path
 
 from crewai import Crew, Process, Task
+
+logger = logging.getLogger(__name__)
 
 from agents import (
     create_ingest_agent,
@@ -54,6 +58,27 @@ def extract_json_from_llm(text: str) -> dict:
         return json.loads(clean)
     except json.JSONDecodeError as e:
         raise ValueError(f"Failed to parse JSON from LLM output: {e}\nRaw text:\n{text[:500]}") from e
+
+
+_STEP_NAMES = ["INGEST", "PARSE", "INTERPRET", "TRANSFORM", "VALIDATE"]
+
+
+class _StepTimer:
+    """Logs the name and wall-clock duration of each CrewAI task as it completes."""
+
+    def __init__(self) -> None:
+        self._step_index = 0
+        self._step_start = time.time()
+
+    def on_task_complete(self, output) -> None:
+        elapsed = round(time.time() - self._step_start, 2)
+        name = _STEP_NAMES[self._step_index] if self._step_index < len(_STEP_NAMES) else f"Step {self._step_index + 1}"
+        logger.info(
+            "[PIPELINE] Step %d/5 — %-10s completed in %.2fs",
+            self._step_index + 1, name, elapsed,
+        )
+        self._step_index += 1
+        self._step_start = time.time()
 
 
 PARSE_FALLBACK: dict = {
@@ -113,21 +138,35 @@ def run_pipeline(paper_content: str, journal_style: str) -> dict:
               changes_made, imrad_check, citation_consistency, warnings)
             - docx_filename: filename of the generated DOCX in outputs/
     """
+    original_len = len(paper_content)
     paper_content = _truncate_paper_content(paper_content)
+    truncated = len(paper_content) < original_len
+
+    logger.info(
+        "[PIPELINE] Starting — journal=%s chars=%d%s",
+        journal_style, len(paper_content),
+        f" (truncated from {original_len})" if truncated else "",
+    )
+    pipeline_start = time.time()
 
     # LiteLLM (used internally by CrewAI) reads GOOGLE_API_KEY for Google AI Studio
     os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
 
     model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
     llm = f"gemini/{model_name}"
+    logger.info("[PIPELINE] LLM = %s", llm)
 
+    logger.info("[PIPELINE] Loading rules for '%s'...", journal_style)
     rules = load_rules(journal_style)
+    logger.info("[PIPELINE] Rules loaded — %d sections", len(rules))
 
+    logger.info("[PIPELINE] Initialising 5 agents...")
     ingest_agent = create_ingest_agent(llm)
     parse_agent = create_parse_agent(llm)
     interpret_agent = create_interpret_agent(llm)
     transform_agent = create_transform_agent(llm)
     validate_agent = create_validate_agent(llm)
+    logger.info("[PIPELINE] Agents ready")
 
     ingest_task = Task(
         description=(
@@ -230,20 +269,37 @@ def run_pipeline(paper_content: str, journal_style: str) -> dict:
         context=[transform_task, interpret_task],
     )
 
+    step_timer = _StepTimer()
+
     crew = Crew(
         agents=[ingest_agent, parse_agent, interpret_agent, transform_agent, validate_agent],
         tasks=[ingest_task, parse_task, interpret_task, transform_task, validate_task],
         process=Process.sequential,
         verbose=True,
+        task_callback=step_timer.on_task_complete,
     )
 
+    logger.info("[PIPELINE] Kicking off CrewAI — 5 steps: %s", " → ".join(_STEP_NAMES))
     result = crew.kickoff()
     raw_output = str(result)
 
+    logger.info("[PIPELINE] All steps complete — parsing compliance report...")
     compliance_report = _safe_parse_compliance(raw_output)
+    overall_score = compliance_report.get("overall_score", "N/A")
+    logger.info("[PIPELINE] Compliance report parsed — overall_score=%s", overall_score)
 
     transform_raw = str(transform_task.output) if transform_task.output else "{}"
+
+    logger.info("[PIPELINE] Writing formatted DOCX...")
+    t0 = time.time()
     docx_filename = _write_docx_from_transform(transform_raw, rules)
+    logger.info("[PIPELINE] DOCX written — file=%s in %.2fs", docx_filename, time.time() - t0)
+
+    total_elapsed = round(time.time() - pipeline_start, 1)
+    logger.info(
+        "[PIPELINE] Done — score=%s docx=%s total=%.1fs",
+        overall_score, docx_filename, total_elapsed,
+    )
 
     return {
         "compliance_report": compliance_report,
@@ -255,7 +311,8 @@ def _safe_parse_compliance(raw: str) -> dict:
     """Parse compliance_report from final agent output with fallback."""
     try:
         return extract_json_from_llm(raw)
-    except (ValueError, KeyError):
+    except (ValueError, KeyError) as e:
+        logger.warning("[PIPELINE] Compliance JSON parse failed (%s) — using fallback", e)
         return VALIDATE_FALLBACK.copy()
 
 
@@ -271,9 +328,13 @@ def _write_docx_from_transform(transform_raw: str, rules: dict) -> str:
         transform_data = extract_json_from_llm(transform_raw)
         docx_instructions = transform_data.get("docx_instructions", {})
         if not docx_instructions:
+            logger.warning("[DOCX] docx_instructions missing from transform output — using empty sections")
             docx_instructions = {"rules": rules, "sections": []}
+        sections_count = len(docx_instructions.get("sections", []))
+        logger.info("[DOCX] Building document — %d sections", sections_count)
         write_formatted_docx(docx_instructions, output_path)
-    except Exception:
+    except Exception as e:
+        logger.warning("[DOCX] Transform parse failed (%s) — writing fallback document", e)
         fallback_instructions = {
             "rules": rules,
             "sections": [

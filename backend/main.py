@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 import uuid
@@ -9,6 +10,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 load_dotenv(override=True)
+
+# ---------------------------------------------------------------------------
+# Logging — configure once at process start
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
 
 from crew import run_pipeline
 from tools.pdf_reader import extract_pdf_text
@@ -53,6 +64,7 @@ def _sanitize_filename(filename: str) -> str:
 
 @app.get("/health")
 async def health():
+    logger.info("[HEALTH] GET /health — service ok")
     return {"status": "ok", "service": "Agent Paperpal"}
 
 
@@ -70,25 +82,39 @@ async def format_document(
     3. File size (≤ 10MB)
     4. Extracted text length (≥ 100 chars)
     """
+    request_id = uuid.uuid4().hex[:8]
     ext = _get_extension(file.filename or "")
+
+    logger.info(
+        "[REQUEST:%s] POST /format — file=%s journal=%s",
+        request_id, file.filename, journal,
+    )
+
     if ext not in ALLOWED_EXTENSIONS:
+        logger.warning("[REQUEST:%s] Rejected — unsupported extension '.%s'", request_id, ext)
         raise HTTPException(
             status_code=422,
             detail=f"Unsupported file type '.{ext}'. Upload a PDF or DOCX.",
         )
 
     if journal.lower().strip() not in JOURNAL_MAP:
+        logger.warning("[REQUEST:%s] Rejected — unknown journal '%s'", request_id, journal)
         raise HTTPException(
             status_code=422,
             detail=f"Unsupported journal '{journal}'. Choose from: {get_supported_journals()}",
         )
 
     content = await file.read()
+    size_kb = round(len(content) / 1024, 1)
+
     if len(content) > MAX_FILE_SIZE:
+        logger.warning("[REQUEST:%s] Rejected — file too large (%sKB)", request_id, size_kb)
         raise HTTPException(
             status_code=413,
             detail="File exceeds 10MB limit.",
         )
+
+    logger.info("[REQUEST:%s] File accepted — size=%sKB type=%s", request_id, size_kb, ext.upper())
 
     upload_filename = f"{uuid.uuid4().hex}_{file.filename}"
     upload_path = UPLOADS_DIR / upload_filename
@@ -96,23 +122,37 @@ async def format_document(
     try:
         upload_path.write_bytes(content)
 
+        logger.info("[REQUEST:%s] Extracting text from %s...", request_id, ext.upper())
+        t0 = time.time()
         if ext == "pdf":
             paper_text = extract_pdf_text(str(upload_path))
         else:
             paper_text = extract_docx_text(str(upload_path))
+        logger.info(
+            "[REQUEST:%s] Text extracted — %d chars in %.2fs",
+            request_id, len(paper_text), time.time() - t0,
+        )
 
         if len(paper_text.strip()) < MIN_TEXT_LENGTH:
+            logger.warning("[REQUEST:%s] Rejected — extracted text too short (%d chars)", request_id, len(paper_text.strip()))
             raise HTTPException(
                 status_code=422,
                 detail="Extracted text is too short. Ensure the document contains readable text.",
             )
 
+        logger.info("[REQUEST:%s] Starting CrewAI pipeline — journal=%s", request_id, journal)
         start = time.time()
         result = run_pipeline(paper_text, journal)
         elapsed = round(time.time() - start, 1)
 
         docx_filename = result["docx_filename"]
         compliance_report = result["compliance_report"]
+        overall_score = compliance_report.get("overall_score", "N/A")
+
+        logger.info(
+            "[REQUEST:%s] Pipeline complete — score=%s docx=%s total=%.1fs",
+            request_id, overall_score, docx_filename, elapsed,
+        )
 
         return {
             "success": True,
@@ -124,8 +164,10 @@ async def format_document(
     except HTTPException:
         raise
     except ValueError as e:
+        logger.error("[REQUEST:%s] Validation error — %s", request_id, str(e))
         raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:
+        logger.exception("[REQUEST:%s] Pipeline error — %s", request_id, str(e))
         raise HTTPException(
             status_code=500,
             detail=f"Pipeline error: {str(e)}",
@@ -133,6 +175,7 @@ async def format_document(
     finally:
         if upload_path.exists():
             upload_path.unlink(missing_ok=True)
+            logger.debug("[REQUEST:%s] Temp upload file cleaned up", request_id)
 
 
 @app.get("/download/{filename}")
