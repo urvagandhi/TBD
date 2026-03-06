@@ -294,6 +294,6 @@ def create_validate_agent(llm: Any) -> Agent:
         ),
         llm=llm,
         allow_delegation=False,
-        verbose=True,
+        verbose=False,
         max_iter=3,
     )

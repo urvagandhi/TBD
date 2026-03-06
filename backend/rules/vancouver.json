@@ -1,6 +1,5 @@
 {
   "style_name": "Vancouver",
-
   "document": {
     "font": "Times New Roman",
     "font_size": 12,
@@ -14,14 +13,12 @@
     "alignment": "left",
     "columns": 1
   },
-
   "title_page": {
     "title_case": "Title Case",
     "title_bold": false,
     "title_centered": false,
     "title_font_size": 12
   },
-
   "abstract": {
     "label": "Abstract",
     "label_bold": true,
@@ -33,7 +30,6 @@
     "keywords_label": "Keywords:",
     "keywords_italic": false
   },
-
   "headings": {
     "H1": {
       "bold": true,
@@ -65,37 +61,34 @@
       "font_size": 12
     }
   },
-
   "citations": {
     "style": "numbered",
-    "brackets": "parentheses",
-    "format_one_author": "(1)",
-    "format_two_authors": "(1)",
-    "format_three_plus": "(1)",
-    "format_numbered": "(N)",
+    "brackets": "square",
+    "format_one_author": "[N]",
+    "format_two_authors": "[N]",
+    "format_three_plus": "[N]",
+    "format_numbered": "[N]",
     "include_page_for_quotes": false,
     "page_format": "p. 45"
   },
-
   "references": {
     "section_label": "References",
     "label_bold": true,
     "label_centered": false,
     "label_italic": false,
     "ordering": "appearance",
-    "hanging_indent": false,
-    "indent_size": "0in",
+    "hanging_indent": true,
+    "indent_size": "0.5in",
     "line_spacing": 1.0,
     "space_between_entries": false,
     "formats": {
-      "journal_article": "N. Author AA, Author BB. Title of article. Journal Abbreviation. Year Mon Day;Volume(Issue):Page-Page. doi:10.xxxx/xxxxx.",
-      "book": "N. Author AA. Title of Book. Edition. Place: Publisher; Year.",
-      "book_chapter": "N. Author AA. Title of chapter. In: Editor AA, editor. Title of Book. Place: Publisher; Year. p. Page-Page.",
-      "website": "N. Author AA [Internet]. Title of page. Place: Publisher; Year [cited Year Mon Day]. Available from: URL",
-      "conference_paper": "N. Author AA. Title of paper. In: Editor AA, editor. Conference Name; Year Mon Day; City. Place: Publisher; Year. p. Page-Page."
+      "journal_article": "Author AA, Author BB. Title of article. Journal Abbreviation. Year;Volume(Issue):Page-Page. doi:10.xxxx/xxxxx.",
+      "book": "Author AA. Title of Book. Edition. Place: Publisher; Year.",
+      "book_chapter": "Author AA. Title of chapter. In: Editor AA, editor. Title of Book. Place: Publisher; Year. p. Page-Page.",
+      "website": "Author AA. Title of page [Internet]. Place: Publisher; Year [cited Year Mon Day]. Available from: URL",
+      "conference_paper": "Author AA. Title of paper. In: Conference Name; Year Mon Day; City. Place: Publisher; Year. p. Page-Page."
     }
   },
-
   "figures": {
     "label_prefix": "Figure",
     "label_bold": false,
@@ -106,7 +99,6 @@
     "numbering": "arabic",
     "note_label": "Note:"
   },
-
   "tables": {
     "label_prefix": "Table",
     "label_bold": false,
@@ -118,12 +110,10 @@
     "border_style": "header_only",
     "note_label": "Note:"
   },
-
   "equations": {
     "numbering": "right_aligned",
     "numbering_format": "(1)"
   },
-
   "general_rules": {
     "doi_format": "doi:10.xxxx/xxxxx",
     "url_format": "Available from: URL",

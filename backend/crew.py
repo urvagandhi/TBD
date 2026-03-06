@@ -5,11 +5,12 @@ import re
 import time
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict, Any, Tuple
 
 from tools.text_chunker import split_into_sections
+from tools.pdf_reader import extract_pdf_text
 
-from crewai import Crew, Process, Task
+from crewai import Agent, Crew, Process, Task, LLM
 from dotenv import load_dotenv
 
 from agents import (
@@ -246,9 +247,16 @@ def _validate_docx_instructions(docx_instructions: dict) -> None:
     except ImportError:
         logger.warning("[DOCX_VALID] jsonschema not installed — skipping schema validation")
     except Exception as e:
+        # Extract the section index if the error occurred within the sections list
+        path_msg = ""
+        if hasattr(e, "path") and len(e.path) >= 2 and e.path[0] == "sections":
+            idx = e.path[1]
+            path_msg = f" at sections[{idx}]"
+        
         msg = e.message if hasattr(e, "message") else str(e)
+        logger.error("[TRANSFORM] Schema validation failed%s: %s", path_msg, msg)
         raise TransformError(
-            f"docx_instructions failed schema validation: {msg}. "
+            f"docx_instructions failed schema validation{path_msg}: {msg}. "
             "Transform agent returned malformed output."
         )
 
@@ -527,6 +535,18 @@ def extract_json_from_llm(raw: str) -> dict:
 
     # Step 3: Fix trailing commas before } or ]
     text = re.sub(r",(\s*[}\]])", r"\1", text)
+    
+    # NEW Step: Fix missing commas between objects in a list
+    # This matches } { and replaces with }, { (allowing for whitespace)
+    text = re.sub(r'}\s*\n*\s*{', '}, {', text)
+    # Also fix missing commas between key-value pairs where the next key starts on a new line
+    # Match "value" \n "key":
+    text = re.sub(r'("\s*:\s*(?:"[^"]*"|[\dtruefalsenull\.]+))\s*\n+\s*"', r'\1, \n"', text)
+
+    # NEW Step: Fix unescaped newlines inside strings (common in LLM output)
+    def fix_newlines(m):
+        return m.group(0).replace('\n', '\\n').replace('\r', '')
+    text = re.sub(r'"[^"\\]*(?:\\.[^"\\]*)*"', fix_newlines, text, flags=re.DOTALL)
 
     # Step 4: Replace Python literals with JSON equivalents
     text = re.sub(r"\bTrue\b", "true", text)
@@ -541,13 +561,19 @@ def extract_json_from_llm(raw: str) -> dict:
 
     # Step 6: Last resort — replace single quotes with double quotes
     try:
-        fixed = text.replace("'", '"')
+        # Improved single-quote to double-quote conversion
+        # This replaces single quotes that look like they are delimiting strings
+        fixed = re.sub(r"(^|[\{\s,\[])'([^']*)'([\s,\}\]]|$)", r'\1"\2"\3', text)
+        # If that didn't help, try the old hammer
+        if fixed == text:
+            fixed = text.replace("'", '"')
         return json.loads(fixed)
     except json.JSONDecodeError as e:
         snippet = raw[:300] + ("..." if len(raw) > 300 else "")
         raise LLMResponseError(
             f"Could not extract valid JSON from LLM output.\n"
             f"Parse error: {e}\n"
+            f"Note: This often happens if the LLM output was truncated or contained unescaped characters.\n"
             f"Raw output (first 300 chars): {snippet}"
         )
 
@@ -591,9 +617,24 @@ def _validate_task_outputs(crew: Crew) -> None:
         (2, "transform", lambda o: '"docx_instructions"' in o or "'docx_instructions'" in o),
         (3, "validate",  lambda o: '"overall_score"' in o or "'overall_score'" in o),
     ]
+
+    import json
+    import uuid
+    from pathlib import Path
+    
+    # Save intermediate outputs to outputs/ folder for debugging
+    run_id = uuid.uuid4().hex[:6]
+    outputs_dir = Path(__file__).parent / "outputs"
+    outputs_dir.mkdir(exist_ok=True)
+
     for idx, name, check in validations:
         try:
             raw = _get_task_output(crew, idx)
+            # Save raw output
+            debug_path = outputs_dir / f"intermediate_{run_id}_{idx+1}_{name}.txt"
+            with open(debug_path, "w", encoding="utf-8") as f:
+                f.write(raw)
+                
         except TransformError as e:
             raise TransformError(f"Pipeline task '{name}' (step {idx + 1}) produced no output: {e}")
         if not check(raw):
@@ -659,8 +700,16 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
     os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
 
     model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-    llm = f"gemini/{model_name}"
-    logger.info("[PIPELINE] LLM = %s", llm)
+    llm_timeout = int(os.getenv("LLM_TIMEOUT", "300"))
+    
+    # Improvement 12: Use structured LLM object with high max_tokens to prevent truncation
+    llm = LLM(
+        model=f"gemini/{model_name}",
+        timeout=llm_timeout,
+        temperature=0,
+        max_tokens=16384, # High limit for large docx_instructions
+    )
+    logger.info("[PIPELINE] LLM = %s (max_tokens=16384)", model_name)
 
     logger.info("[PIPELINE] Loading rules for '%s'...", journal_style)
     rules = load_rules(journal_style)
@@ -758,33 +807,24 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
             f"  IN-TEXT CITATIONS: Reformat ALL citations to required format.\n"
             f"  REFERENCES: Sort to correct order, apply style.\n"
             f"  FIGURES/TABLES: Apply caption position and format pattern.\n\n"
-            f"Output JSON with EXACTLY these top-level keys:\n\n"
-            f"violations: list of objects — one per violation found in PHASE A:\n"
-            f"  {{rule_category, rule_description, rule_reference, violation_found, fix_applied}}\n\n"
-            f"changes_made: list of objects — one per change applied, each:\n"
-            f"  {{\"what\": \"human-readable description of the fix\",\n"
-            f"   \"rule_reference\": \"journal rule section e.g. 'IEEE Ref Guide §III'\",\n"
-            f"   \"why\": \"why this was required e.g. 'Required by IEEE Ref Guide §III'\"}}\n\n"
-            f"docx_instructions: object with:\n"
-            f"  font, font_size, line_spacing, margins (top/bottom/left/right in inches),\n"
-            f"  sections: list of ALL content in document order, each:\n"
-            f"    {{type: HEADING_H1|HEADING_H2|HEADING_H3|BODY_PARAGRAPH|ABSTRACT|\n"
-            f"           FIGURE_CAPTION|TABLE_CAPTION|REFERENCE_ENTRY,\n"
-            f"     content: <VERBATIM original text — do NOT rephrase or paraphrase>,\n"
-            f"     level: 1|2|3 (headings only)}}\n\n"
-            f"citation_replacements: list of {{original, replacement}} for in-text changes\n\n"
-            f"reference_order: list of reference strings in correct journal order\n\n"
-            f"CRITICAL RULE: Every 'content' field MUST be VERBATIM original text.\n"
-            f"Never summarize, paraphrase, or rewrite content — only FORMAT it.\n\n"
-            f"{section_rules_guide}\n\n"
-            f"Full journal rules:\n"
-            f"{json.dumps(rules, indent=2)}\n\n"
-            f"Return ONLY valid JSON — no markdown fences, no explanation."
+            "PHASE A: FORMATTING AUDIT\n"
+            "Identify ALL violations of journal rules in the paper structure.\n"
+            "Compare font, margins, headings (H1-H3), citations, and references.\n\n"
+            "PHASE B: TRANSFORMATION SPECIFICATION\n"
+            "Generate the DOCX build instructions. Populate 'docx_instructions.sections' "
+            "with all paper content using the correct section types.\n\n"
+            "PHASE C: OUTPUT GENERATION (CRITICAL)\n"
+            "Return ONLY a raw JSON object. NO code, NO markdown, NO preamble.\n"
+            "The JSON MUST contain these top-level keys: "
+            "violations, changes_made, docx_instructions, citation_replacements, reference_order.\n\n"
+            "INPUTS:\n"
+            f"1. The paper_structure JSON (previous context)\n"
+            f"2. The journal rules JSON: {json.dumps(rules, indent=2)}\n"
+            f"3. Target journal: {journal_style}"
         ),
         expected_output=(
-            "Valid JSON with: violations (PHASE A scan results), changes_made (list of strings), "
-            "docx_instructions (font, font_size, line_spacing, margins, sections list with "
-            "type/content/level per block), citation_replacements, reference_order."
+            "A JSON object with EXACTLY: violations, changes_made, docx_instructions, citation_replacements, reference_order. "
+            "Return ONLY raw JSON."
         ),
         agent=transform_agent,
         context=[parse_task],
@@ -856,18 +896,44 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
         agents=[ingest_agent, parse_agent, transform_agent, validate_agent],
         tasks=[ingest_task, parse_task, transform_task, validate_task],
         process=Process.sequential,
-        verbose=True,
+        verbose=False,
         task_callback=step_timer.on_task_complete,
     )
 
-    logger.info("[PIPELINE] Kicking off CrewAI — 4 steps: %s", " → ".join(_STEP_NAMES))
-    result = crew.kickoff()
-    raw_output = str(result)
+    # Improvement 11: Single attempt for faster feedback
+    max_retries = 0
+    last_error = None
 
-    # Improvement 1: Validate all task outputs before proceeding
-    logger.info("[PIPELINE] Validating all task outputs...")
-    _validate_task_outputs(crew)
-    logger.info("[PIPELINE] All task outputs validated OK")
+    for attempt in range(max_retries + 1):
+        try:
+            logger.info("[PIPELINE] Kicking off CrewAI (Attempt %d/%d)...",
+                        attempt + 1, max_retries + 1)
+            result = crew.kickoff()
+            raw_output = str(result)
+
+            # Validate all task outputs before proceeding
+            logger.info("[PIPELINE] Validating task outputs...")
+            _validate_task_outputs(crew)
+            
+            # Additional validation for transform output specifically
+            transform_raw = _get_task_output(crew, task_index=2)
+            transform_data = extract_json_from_llm(transform_raw)
+            if "docx_instructions" in transform_data:
+                _normalize_docx_instructions(transform_data["docx_instructions"])
+                _validate_docx_instructions(transform_data["docx_instructions"])
+
+            logger.info("[PIPELINE] All outputs validated OK on attempt %d", attempt + 1)
+            break
+        except (TransformError, LLMResponseError, ValidationError) as e:
+            last_error = e
+            if attempt < max_retries:
+                logger.warning("[PIPELINE] Attempt %d failed: %s. Retrying...", attempt + 1, e)
+                # Small delay before retry
+                time.sleep(2)
+                continue
+            else:
+                logger.error("[PIPELINE] All %d attempts failed. Final error: %s", max_retries + 1, e)
+                raise
 
     logger.info("[PIPELINE] All steps complete — parsing compliance report...")
     compliance_report = _parse_compliance_report(raw_output)
@@ -1075,32 +1141,63 @@ def _parse_compliance_report(raw: str) -> dict:
 
 _SECTION_TYPE_MAP: dict[str, dict] = {
     # LLM-returned types (from transform prompt) → docx_writer internal types
+    "title":            {"type": "title"},
+    "authors":          {"type": "paragraph", "centered": True}, # Writers apply styling via 'rules' when type is passed or mapped
+    "abstract_label":   {"type": "abstract"}, # Merges the label styling
+    "abstract_body":    {"type": "paragraph"},
+    "keywords":         {"type": "paragraph"},
+    
     "heading_h1":       {"type": "heading", "level": 1},
     "heading_h2":       {"type": "heading", "level": 2},
     "heading_h3":       {"type": "heading", "level": 3},
+    "heading":          {"type": "heading"},
+    
+    "body":             {"type": "paragraph"},
     "body_paragraph":   {"type": "paragraph"},
-    "abstract":         {"type": "abstract"},
+    
     "figure_caption":   {"type": "figure_caption"},
     "table_caption":    {"type": "table_caption"},
+    
+    "reference_label":  {"type": "heading", "level": 1},
     "reference_entry":  {"type": "reference"},
-    "title":            {"type": "title"},
+    
     # Already-normalised passthrough (identity mappings)
-    "heading":          {"type": "heading"},
+    "abstract":         {"type": "abstract"},
     "paragraph":        {"type": "paragraph"},
     "reference":        {"type": "reference"},
 }
 
 
+def _normalize_docx_instructions(docx: dict) -> dict:
+    """
+    User-suggested normalization layer (Improvement 11).
+    Ensures every section has a 'content' key, mapping 'text' -> 'content' if needed.
+    Also handles cases where LLM returns a list instead of a string.
+    """
+    sections = docx.get("sections", [])
+    if not isinstance(sections, list):
+        return docx
+
+    for s in sections:
+        if not isinstance(s, dict):
+            continue
+        # convert text → content
+        if "content" not in s:
+            if "text" in s:
+                s["content"] = s.pop("text")
+            else:
+                s["content"] = ""
+
+        # Recovery for list-type content (e.g., authors or references)
+        if isinstance(s.get("content"), list):
+            s["content"] = ", ".join([str(item) for item in s["content"]])
+
+    return docx
+
+
 def _normalize_section_types(sections: list) -> list:
     """
     Normalize LLM-returned section type strings to docx_writer-compatible values.
-
-    The transform prompt instructs the LLM to return types like HEADING_H1,
-    BODY_PARAGRAPH, REFERENCE_ENTRY — but write_formatted_docx() expects
-    'heading', 'paragraph', 'reference'. This function bridges that gap.
-
-    For HEADING_H1/H2/H3 it also injects the correct 'level' field if missing.
-    Unknown types fall back to 'paragraph' (logged as a warning).
     """
     normalized = []
     for sec in sections:
@@ -1108,9 +1205,9 @@ def _normalize_section_types(sections: list) -> list:
             continue
         raw_type = str(sec.get("type", "paragraph")).lower()
         mapping = _SECTION_TYPE_MAP.get(raw_type)
+
         if mapping:
             merged = {**sec, **mapping}
-            # Respect explicit 'level' from LLM if it provided one and mapping doesn't override
             if "level" not in mapping and "level" in sec:
                 merged["level"] = sec["level"]
             normalized.append(merged)
@@ -1182,7 +1279,8 @@ def _write_docx_from_transform(
             f"{list(docx_instructions.keys()) if isinstance(docx_instructions, dict) else '(not a dict)'}"
         )
 
-    # 8B: Validate schema before write — catches LLM schema drift early
+    # 8B: Normalize and Validate schema before write
+    docx_instructions = _normalize_docx_instructions(docx_instructions)
     _validate_docx_instructions(docx_instructions)
 
     # 8A: Verbatim content guard — filter empties, restore truncated abstract
