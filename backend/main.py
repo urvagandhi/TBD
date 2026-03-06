@@ -614,14 +614,6 @@ async def download_file(filename: str) -> FileResponse:
 async def get_job_status(job_id: str) -> JSONResponse:
     """
     Poll endpoint for async background jobs (large files >500KB).
-
-    Returns:
-      - {"status": "processing"} while running
-      - {"status": "done", "result": {...}} when complete — result shape is
-        identical to the synchronous /format response
-      - {"status": "error", "error": "..."} on failure
-
-    Security: job_id is validated as alphanumeric hex to prevent injection.
     """
     if not re.match(r"^[a-f0-9]{8}$", job_id):
         raise HTTPException(
@@ -631,6 +623,7 @@ async def get_job_status(job_id: str) -> JSONResponse:
 
     job = JOB_STORE.get(job_id)
     if job is None:
+        logger.warning("[STATUS] Job '%s' not found", job_id)
         raise HTTPException(
             status_code=404,
             detail={
@@ -640,4 +633,8 @@ async def get_job_status(job_id: str) -> JSONResponse:
         )
 
     logger.debug("[STATUS] job_id=%s status=%s", job_id, job.get("status"))
-    return JSONResponse(status_code=200, content=job)
+    return JSONResponse(
+        status_code=200,
+        content=job,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )

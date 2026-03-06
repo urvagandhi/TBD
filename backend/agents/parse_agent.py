@@ -204,7 +204,7 @@ def create_parse_agent(llm: Any) -> Agent:
         ),
         llm=llm,
         allow_delegation=False,
-        verbose=True,
+        verbose=False,
         max_iter=3,
         max_tokens=16384,
     )

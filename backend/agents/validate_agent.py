@@ -312,7 +312,7 @@ def create_validate_agent(llm: Any, journal_style: str = "APA 7th Edition") -> A
         backstory=backstory,
         llm=llm,
         allow_delegation=False,
-        verbose=True,
+        verbose=False,
         max_iter=3,
         max_tokens=8192,
     )

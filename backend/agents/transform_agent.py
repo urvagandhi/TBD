@@ -1,13 +1,15 @@
 """
-Agent 3: TRANSFORM — Compare paper structure vs APA 7th Edition rules,
+Agent 3: TRANSFORM — Compare paper structure vs journal rules,
 convert citations/references, produce docx_instructions.
 
 This is the core formatting engine. It identifies every formatting violation,
-converts citations from numbered to author-date, converts references from NLM
-to APA format, and generates the complete docx_instructions that drives the
-DOCX writer.
+converts citations to the target format, converts references to the target style,
+and generates the complete docx_instructions that drives the DOCX writer.
 
-Prompt matches APA_Pipeline_Complete_Prompts.md §4 exactly.
+Supports modular per-journal prompts:
+  - APA 7th Edition: page-based sections, author-date citations, hanging indent refs
+  - IEEE: flat sections, numbered [N] citations, 2-column, appearance-ordered refs
+  - Generic fallback: rules-driven for Vancouver/Springer/Chicago/others
 """
 import re
 import time
@@ -47,16 +49,7 @@ def _normalize_citation(citation: str) -> str:
 
 
 def _validate_transform_output(data: dict) -> None:
-    """
-    Validate transform output before DOCX generation.
-
-    Checks:
-      1. data is a dict
-      2. "docx_instructions" key exists
-      3. docx_instructions["sections"] exists and is non-empty
-      4. "violations" key exists
-      5. "changes_made" key exists
-    """
+    """Validate transform output before DOCX generation."""
     if not isinstance(data, dict):
         raise LLMResponseError(
             f"Transform output must be a JSON object (dict), got {type(data).__name__}"
@@ -89,7 +82,27 @@ def _safe_context(context: dict, key: str) -> Any:
     return context[key]
 
 
-# ── System prompt from APA_Pipeline_Complete_Prompts.md §4 ──────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# STYLE DETECTION — modular routing for journal-specific prompts
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def detect_style(journal_style: str) -> str:
+    """Detect the style key from a journal style string.
+
+    Returns: "apa" | "ieee" | "generic"
+    """
+    s = journal_style.lower()
+    if "apa" in s:
+        return "apa"
+    if "ieee" in s:
+        return "ieee"
+    return "generic"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# APA 7th EDITION PROMPT (from APA_Pipeline_Complete_Prompts.md §4)
+# ═══════════════════════════════════════════════════════════════════════════════
+
 TRANSFORM_SYSTEM_PROMPT = """You are an APA 7th Edition formatting engine. You receive a parsed paper JSON and transform it into a fully APA-compliant document with DOCX rendering instructions.
 
 ## ═══ YOUR FORMAT: APA 7th Edition (2020) ═══
@@ -360,11 +373,167 @@ Return ONLY this JSON (no markdown, no backticks):
 Return ONLY the JSON. No markdown backticks, no explanation text."""
 
 
-# ── Generic (non-APA) transform prompt — rules-driven ────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# IEEE PROMPT — numbered citations, 2-column, appearance-ordered refs
+# ═══════════════════════════════════════════════════════════════════════════════
+
+IEEE_TRANSFORM_SYSTEM_PROMPT = """You are an IEEE formatting engine. You receive a parsed paper JSON and the IEEE formatting rules, and you produce a fully IEEE-compliant document with DOCX rendering instructions.
+
+SYSTEM RULE: You are a DATA GENERATOR, not a programmer.
+DO NOT write Python code. DO NOT explain your process. DO NOT use scratchpads.
+
+## ═══ YOUR FORMAT: IEEE ═══
+
+## ═══ SECTION A: DOCUMENT FORMATTING RULES ═══
+
+Apply these to the ENTIRE document:
+• Font: Times New Roman, 10pt
+• Line spacing: 1.0 (single) throughout
+• Margins: top 0.75", bottom 1", left/right 0.625"
+• Layout: TWO-COLUMN
+• Alignment: Justified
+• No page numbers in body (handled by publisher)
+
+## ═══ SECTION B: TITLE & AUTHORS ═══
+
+1. Paper title — BOLD, centered, Title Case, 24pt font size
+2. Author name(s) — centered, NOT bold
+3. Affiliation — centered, italic
+4. Title and authors span BOTH columns (full page width)
+
+## ═══ SECTION C: ABSTRACT ═══
+
+1. "Abstract" label — bold, flush left, NOT italic, NOT centered
+2. Abstract body — single paragraph, no first-line indent, justified
+3. Word count ≤ 250
+4. "Index Terms—" followed by keywords, NOT italic
+
+## ═══ SECTION D: HEADINGS ═══
+
+Level 1 (H1): NOT bold, centered, UPPERCASE, Roman numeral numbering (I, II, III)
+Level 2 (H2): Bold, flush left, Title Case, letter numbering (A, B, C)
+Level 3 (H3): NOT bold, italic, flush left, indented, Sentence case, numeric (1, 2, 3), inline with text
+
+ALL headings: 10pt (same as body).
+
+## ═══ SECTION E: CITATIONS ═══
+
+IEEE uses NUMBERED citations in square brackets:
+• Single: [1]
+• Multiple: [1], [2] or [1]–[3]
+• Range: [1]–[5]
+
+Citations appear in ORDER OF APPEARANCE in the text.
+If source already uses numbered citations, KEEP them.
+If source uses author-date citations, CONVERT to numbered [N] format.
+
+## ═══ SECTION F: REFERENCES ═══
+
+Heading: "REFERENCES" — NOT bold, centered, UPPERCASE
+
+Format rules:
+• Ordering: by ORDER OF APPEARANCE (NOT alphabetical)
+• Each entry starts with [N] bracket number
+• Hanging indent: 0.25"
+• Line spacing: 1.0 (single)
+• No extra space between entries
+
+Reference templates:
+• Journal: [N] A. B. Author and C. D. Author, "Title of article," *Abbrev. Journal Name*, vol. X, no. Y, pp. Z1–Z2, Month Year, doi: 10.1109/xxxxx.
+• Conference: [N] A. B. Author, "Title of paper," in *Proc. Conference Name*, City, Country, Year, pp. X–Y.
+• Book: [N] A. B. Author, *Title of Book*, Xth ed. City, Country: Publisher, Year.
+
+Author format: First initial(s). Last name (e.g., A. B. Smith)
+Use "and" between last two authors (NOT &)
+6+ authors: list first author et al.
+
+## ═══ SECTION G: FIGURES & TABLES ═══
+
+FIGURES:
+• Label: "Fig. N" (NOT "Figure"), NOT bold
+• Caption below figure, centered
+• Arabic numbering: Fig. 1, Fig. 2, ...
+
+TABLES:
+• Label: "TABLE N" — bold, Roman numerals (TABLE I, TABLE II)
+• Caption above table, centered
+• Full grid borders
+
+## ═══ SECTION H: OUTPUT JSON SCHEMA ═══
+
+Return ONLY this JSON (no markdown, no backticks):
+
+{
+  "format_applied": "IEEE",
+
+  "violations": [
+    {"element": "...", "current": "...", "required": "...", "severity": "high|medium|low"}
+  ],
+
+  "changes_made": [
+    "Applied IEEE heading hierarchy (UPPERCASE H1, Title Case H2)"
+  ],
+
+  "citation_replacements": [
+    {"original": "(Smith, 2020)", "replacement": "[1]"}
+  ],
+
+  "reference_order": ["[1] A. B. Author...", "[2] C. D. Author..."],
+
+  "docx_instructions": {
+    "format_id": "ieee",
+    "font": "Times New Roman",
+    "font_size": 10,
+    "line_spacing": 1.0,
+    "alignment": "justify",
+    "columns": 2,
+    "rules": {},
+    "sections": [
+      {"type": "title", "content": "...", "bold": true, "centered": true},
+      {"type": "authors", "content": "...", "centered": true},
+      {"type": "abstract", "content": "..."},
+      {"type": "keywords", "content": "Index Terms— term1, term2"},
+      {"type": "heading", "content": "I. INTRODUCTION", "level": 1},
+      {"type": "paragraph", "content": "..."},
+      {"type": "heading", "content": "A. Subsection", "level": 2},
+      {"type": "paragraph", "content": "..."},
+      {"type": "figure_caption", "content": "Fig. 1. Description"},
+      {"type": "table_caption", "content": "TABLE I. Description"},
+      {"type": "reference", "content": "[1] A. B. Author..."}
+    ]
+  }
+}
+
+NEGATIVE CONSTRAINTS:
+- NO PREAMBLE (e.g., "Here is the JSON...")
+- NO PYTHON CODE (e.g., "import json...")
+- NO CODE FENCES (```json ... ```)
+- NO COMMENTARY
+
+## ═══ ABSOLUTE REQUIREMENTS ═══
+
+1. docx_instructions.sections MUST be non-empty and cover ALL paper content.
+2. ALL citations must be in [N] numbered format.
+3. References ordered by appearance, NOT alphabetical.
+4. NEVER truncate body text.
+5. Use *asterisks* for italic markers (journal names, book titles).
+
+## OUTPUT
+
+Return ONLY the JSON. No markdown backticks, no explanation text."""
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GENERIC PROMPT — rules-driven fallback for Vancouver/Springer/Chicago/others
+# ═══════════════════════════════════════════════════════════════════════════════
+
 GENERIC_TRANSFORM_SYSTEM_PROMPT = """You are an academic manuscript formatting transformer. You receive a parsed paper JSON and the target journal's formatting rules, and you produce:
 1. A list of ALL formatting violations found
 2. The corrected text for each element
 3. Complete DOCX rendering instructions that the DOCX writer will execute EXACTLY
+
+SYSTEM RULE: You are a DATA GENERATOR, not a programmer.
+DO NOT write Python code. DO NOT explain your process. DO NOT use scratchpads.
 
 ## YOUR TASK
 
@@ -376,14 +545,7 @@ Apply the provided journal formatting rules to transform the manuscript. The rul
 - Abstract requirements (label style, max words, keywords)
 - Figure/table caption rules (position, label format, numbering)
 
-## CRITICAL: Follow the rules JSON exactly — do NOT assume APA defaults.
-
-Different journals have very different requirements:
-- IEEE: 10pt, single-spaced, two-column, numbered [N] citations, appearance-ordered refs
-- Vancouver: numbered citations, NLM reference style
-- Springer: varies by journal — follow the rules provided
-- Chicago: footnote or author-date depending on variant
-- APA: author-date citations, alphabetical refs, double-spaced (handled by separate APA prompt)
+## CRITICAL: Follow the rules JSON exactly — do NOT assume any journal's defaults.
 
 ## TRANSFORMATIONS
 
@@ -428,6 +590,7 @@ Apply caption position, label format, numbering style
     "font_size": "from rules",
     "line_spacing": "from rules",
     "alignment": "from rules",
+    "rules": {},
     "sections": [
       {"type": "title", "content": "...", "bold": true, "centered": true},
       {"type": "abstract", "content": "..."},
@@ -440,24 +603,32 @@ Apply caption position, label format, numbering style
   }
 }
 
+NEGATIVE CONSTRAINTS:
+- NO PREAMBLE (e.g., "Here is the JSON...")
+- NO PYTHON CODE (e.g., "import json...")
+- NO CODE FENCES (```json ... ```)
+- NO COMMENTARY
+
 ## OUTPUT
 
 Return ONLY the JSON. No markdown backticks, no explanation text."""
 
 
-def create_transform_agent(llm: Any, journal_style: str = "APA 7th Edition") -> Agent:
-    """
-    Agent 3: TRANSFORM — Violation detection + formatting + DOCX instructions.
+# ═══════════════════════════════════════════════════════════════════════════════
+# PROMPT REGISTRY — add new journal-specific prompts here
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    Uses APA-specific prompt for APA 7th Edition, generic rules-driven prompt
-    for all other journals (IEEE, Vancouver, Springer, Chicago).
-    """
-    is_apa = "apa" in journal_style.lower()
-    prompt = TRANSFORM_SYSTEM_PROMPT if is_apa else GENERIC_TRANSFORM_SYSTEM_PROMPT
+TRANSFORM_PROMPTS = {
+    "apa": TRANSFORM_SYSTEM_PROMPT,
+    "ieee": IEEE_TRANSFORM_SYSTEM_PROMPT,
+    "generic": GENERIC_TRANSFORM_SYSTEM_PROMPT,
+}
 
-    if is_apa:
-        role = "APA 7th Edition Formatting Transformer"
-        backstory = (
+# Role and backstory per style
+_STYLE_CONFIG = {
+    "apa": {
+        "role": "APA 7th Edition Formatting Transformer",
+        "backstory": (
             "You are a precision manuscript formatting engine with encyclopedic knowledge "
             "of APA 7th Edition. You have transformed over 200,000 manuscripts for "
             "APA-compliant submission. "
@@ -470,22 +641,56 @@ def create_transform_agent(llm: Any, journal_style: str = "APA 7th Edition") -> 
             "You never alter scientific content — only formatting and citation style. "
             "ALL citation replacements are applied inline in body text before output — the "
             "DOCX writer does NOT perform find-replace."
-        )
-    else:
-        role = f"{journal_style} Formatting Transformer"
-        backstory = (
-            f"You are a precision manuscript formatting engine specializing in {journal_style} style. "
-            "You have transformed over 200,000 manuscripts across IEEE, Vancouver, Springer, "
-            "Chicago, and other major journal styles. "
-            "You apply the exact formatting rules provided — font, spacing, margins, citation style, "
-            "reference format, heading hierarchy, and caption conventions. "
-            "You never assume APA defaults — you read the rules JSON and apply exactly what it specifies. "
-            "Your docx_instructions output drives the DOCX writer directly with a flat sections array. "
-            "You never alter scientific content — only formatting and citation style. "
-            "ALL citation/reference changes are applied inline before output."
-        )
+        ),
+    },
+    "ieee": {
+        "role": "IEEE Formatting Transformer",
+        "backstory": (
+            "You are a precision manuscript formatting engine specializing in IEEE style. "
+            "You have formatted over 200,000 manuscripts for IEEE Transactions, Conference "
+            "Proceedings, and Letters. "
+            "You apply IEEE's strict formatting: 10pt Times New Roman, single-spaced, "
+            "two-column layout, justified alignment, numbered [N] citations in order of "
+            "appearance, UPPERCASE H1 headings with Roman numerals, and appearance-ordered "
+            "references with [N] brackets. "
+            "Your docx_instructions output drives the DOCX writer directly with a flat "
+            "sections array. You never alter scientific content — only formatting. "
+            "You are a high-performance formatting compiler. You never talk, never explain, "
+            "and never write code. You only emit JSON."
+        ),
+    },
+}
 
-    logger.info("[TRANSFORM] Agent created — journal=%s is_apa=%s", journal_style, is_apa)
+
+def create_transform_agent(llm: Any, journal_style: str = "APA 7th Edition") -> Agent:
+    """
+    Agent 3: TRANSFORM — Violation detection + formatting + DOCX instructions.
+
+    Routes to journal-specific prompt via detect_style():
+      - "apa"     → TRANSFORM_SYSTEM_PROMPT (page-based sections)
+      - "ieee"    → IEEE_TRANSFORM_SYSTEM_PROMPT (flat sections, 2-column)
+      - "generic" → GENERIC_TRANSFORM_SYSTEM_PROMPT (rules-driven fallback)
+    """
+    style_key = detect_style(journal_style)
+    prompt = TRANSFORM_PROMPTS[style_key]
+    config = _STYLE_CONFIG.get(style_key, {})
+
+    role = config.get("role", f"{journal_style} Formatting Transformer")
+    backstory = config.get("backstory", (
+        f"You are a precision manuscript formatting engine specializing in {journal_style} style. "
+        "You have transformed over 200,000 manuscripts across IEEE, Vancouver, Springer, "
+        "Chicago, and other major journal styles. "
+        "You apply the exact formatting rules provided — font, spacing, margins, citation style, "
+        "reference format, heading hierarchy, and caption conventions. "
+        "You never assume any journal's defaults — you read the rules JSON and apply exactly what it specifies. "
+        "Your docx_instructions output drives the DOCX writer directly with a flat sections array. "
+        "You never alter scientific content — only formatting and citation style. "
+        "ALL citation/reference changes are applied inline before output. "
+        "You are a high-performance formatting compiler. You never talk, never explain, "
+        "and never write code. You only emit JSON."
+    ))
+
+    logger.info("[TRANSFORM] Agent created — journal=%s style_key=%s", journal_style, style_key)
 
     return Agent(
         role=role,

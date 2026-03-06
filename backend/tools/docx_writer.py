@@ -1,18 +1,20 @@
 """
 DOCX Writer — Consumes docx_instructions from TRANSFORM agent.
 
-Two modes:
-  1. build_apa_docx(): New APA-specific writer that handles the section-based
-     format (title_page, abstract_page, body, references_page) from the
-     APA Pipeline prompts. This is the PRIMARY path for APA formatting.
+Three dedicated builders + in-place mode:
+  1. build_apa_docx(): APA-specific writer — page-based sections
+     (title_page, abstract_page, body, references_page).
 
-  2. write_formatted_docx(): Legacy generic writer for non-APA journals.
-     Handles flat section lists (title, heading, paragraph, reference, etc.).
+  2. build_ieee_docx(): IEEE-specific writer — flat sections with
+     2-column layout, 10pt font, single spacing, numbered references.
 
-  3. transform_docx_in_place(): In-place transformation of uploaded DOCX files.
+  3. write_formatted_docx(): Generic fallback for Vancouver, Springer,
+     Chicago, etc. — rules-driven flat sections.
+
+  4. transform_docx_in_place(): In-place transformation of uploaded DOCX files.
      Preserves figures, tables, and embedded objects.
 
-Based on APA_Pipeline_Complete_Prompts.md §6.
+Routing is handled by crew.py via style_key from detect_style().
 """
 import re
 from pathlib import Path
@@ -361,7 +363,7 @@ def _write_references_page(doc, section_data, instructions):
             _add_text_with_italics(p, element.get("text", ""))
 
 
-def _add_text_with_italics(paragraph, text):
+def _add_text_with_italics(paragraph, text, font_name='Times New Roman', font_size_pt=12):
     """Parse *italic* markers and create appropriate runs."""
     if not text:
         return
@@ -372,8 +374,8 @@ def _add_text_with_italics(paragraph, text):
             run.italic = True
         else:
             run = paragraph.add_run(part)
-        run.font.name = 'Times New Roman'
-        run.font.size = Pt(12)
+        run.font.name = font_name
+        run.font.size = Pt(font_size_pt)
 
 
 def _add_page_number_header(section):
@@ -412,41 +414,48 @@ def _add_page_number_header(section):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LEGACY GENERIC WRITER (for non-APA journals)
+# IEEE-SPECIFIC DOCX BUILDER
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def write_formatted_docx(instructions: dict, output_path: str) -> str:
+def build_ieee_docx(instructions: dict, output_path: str) -> str:
     """
-    Write a formatted DOCX file from structured docx_instructions.
+    IEEE-specific DOCX builder.
 
-    Handles both:
-    - New APA format (sections with type=title_page/abstract_page/body/references_page)
-    - Legacy flat format (sections with type=title/heading/paragraph/reference)
+    Handles flat section lists (title, heading, paragraph, reference, etc.)
+    with IEEE rules: 2-column layout, 10pt Times New Roman, single spacing,
+    numbered references, specific margin/heading conventions from rules/ieee.json.
     """
     if not instructions or not instructions.get("sections"):
         raise DocumentWriteError("docx_instructions must contain a non-empty 'sections' list.")
 
     sections = instructions.get("sections", [])
-
-    # Detect if this is the new APA section-based format
-    section_types = {s.get("type") for s in sections if isinstance(s, dict)}
-    is_apa_format = bool(section_types & {"title_page", "abstract_page", "references_page"})
-
-    if is_apa_format:
-        return build_apa_docx(instructions, output_path)
-
-    # Legacy flat format
-    doc = Document()
     rules = instructions.get("rules", {}) or {}
+
+    # Template-aware document generation
+    style_name = (rules.get("style_name") or "IEEE").strip()
+    template_path = Path(__file__).parent.parent / "templates" / f"{style_name}.docx"
+
+    if template_path.exists():
+        logger.info("[DOCX_IEEE] Using journal template: %s", template_path.name)
+        doc = Document(str(template_path))
+    else:
+        logger.debug("[DOCX_IEEE] No template found for '%s' — using blank document", style_name)
+        doc = Document()
 
     doc_rules = rules.get("document", {})
     font_name = doc_rules.get("font", "Times New Roman")
-    font_size = _safe_int(doc_rules.get("font_size", 12), 12)
-    line_spacing = _safe_float(doc_rules.get("line_spacing", 2.0), 2.0)
+    font_size = _safe_int(doc_rules.get("font_size", 10), 10)
+    line_spacing = _safe_float(doc_rules.get("line_spacing", 1.0), 1.0)
     margins = doc_rules.get("margins", {})
+    columns = _safe_int(doc_rules.get("columns", 2), 2)
+    doc_alignment = doc_rules.get("alignment", "justify")
 
     _apply_document_defaults(doc, font_name, font_size, line_spacing)
     _set_document_margins(doc, margins)
+    _set_columns(doc, columns)
+
+    fig_rules = rules.get("figures", {})
+    tbl_rules = rules.get("tables", {})
 
     for section in sections:
         section_type = section.get("type", "paragraph")
@@ -456,7 +465,14 @@ def write_formatted_docx(instructions: dict, output_path: str) -> str:
 
         try:
             if section_type == "title":
-                _add_title(doc, content, font_name, font_size)
+                title_rules = rules.get("title_page", {})
+                _add_title(doc, content, title_rules, font_name, font_size)
+            elif section_type == "authors":
+                para = doc.add_paragraph()
+                para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                _apply_line_spacing(para.paragraph_format, line_spacing)
+                run = para.add_run(content)
+                _apply_font(run, font_name, font_size)
             elif section_type == "heading":
                 level = _safe_int(section.get("level", 1), 1)
                 heading_rules = rules.get("headings", {}).get(f"H{level}", {})
@@ -464,6 +480,206 @@ def write_formatted_docx(instructions: dict, output_path: str) -> str:
             elif section_type == "abstract":
                 abstract_rules = rules.get("abstract", {})
                 _add_abstract(doc, content, abstract_rules, font_name, font_size, line_spacing)
+            elif section_type == "keywords":
+                kw_rules = rules.get("keywords_section", rules.get("abstract", {}))
+                _add_keywords(doc, content, kw_rules, font_name, font_size)
+            elif section_type == "reference":
+                ref_rules = rules.get("references", {})
+                _add_reference(doc, content, ref_rules, font_name, font_size)
+            elif section_type == "figure_caption":
+                _add_ieee_figure_caption(doc, section, fig_rules, font_name, font_size, line_spacing)
+            elif section_type == "table_caption":
+                _add_ieee_table_caption(doc, section, tbl_rules, font_name, font_size, line_spacing)
+            else:
+                _add_paragraph(doc, content, font_name, font_size, line_spacing, doc_alignment)
+        except Exception as e:
+            logger.warning("[DOCX_IEEE] Failed to render section type=%s: %s", section_type, e)
+            try:
+                _add_paragraph(doc, content, font_name, font_size, line_spacing, doc_alignment)
+            except Exception:
+                pass
+
+    out = Path(output_path).resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    doc.save(str(out))
+    logger.info("[DOCX_IEEE] Written | file=%s | sections=%d", out.name, len(sections))
+    return str(out)
+
+
+def _add_ieee_figure_caption(
+    doc: Document, section: dict, fig_rules: dict,
+    font_name: str, font_size: int, line_spacing: float,
+) -> None:
+    """
+    IEEE figure caption: "Fig. 1." label + caption text.
+
+    IEEE conventions (from rules/ieee.json):
+      - label_prefix: "Fig."  (not "Figure")
+      - label NOT bold, NOT italic
+      - caption NOT italic, centered, below figure
+      - numbering: arabic (1, 2, 3...)
+    """
+    label_prefix = fig_rules.get("label_prefix", "Fig.")
+    label_bold = fig_rules.get("label_bold", False)
+    label_italic = fig_rules.get("label_italic", False)
+    caption_italic = fig_rules.get("caption_italic", False)
+    caption_align = fig_rules.get("caption_alignment", "center")
+
+    number = section.get("number", "")
+    caption = section.get("caption", section.get("content", ""))
+    label_text = f"{label_prefix} {number}." if number else f"{label_prefix}"
+
+    para = doc.add_paragraph()
+    if caption_align == "center":
+        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    elif caption_align == "left":
+        para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    _apply_line_spacing(para.paragraph_format, line_spacing)
+    para.paragraph_format.space_before = Pt(6)
+    para.paragraph_format.space_after = Pt(6)
+
+    # Label run: "Fig. 1."
+    label_run = para.add_run(label_text + " ")
+    _apply_font(label_run, font_name, font_size, bold=label_bold, italic=label_italic)
+
+    # Caption run
+    if caption:
+        cap_run = para.add_run(caption)
+        _apply_font(cap_run, font_name, font_size, bold=False, italic=caption_italic)
+
+
+def _add_ieee_table_caption(
+    doc: Document, section: dict, tbl_rules: dict,
+    font_name: str, font_size: int, line_spacing: float,
+) -> None:
+    """
+    IEEE table caption: "TABLE I" label (above table) + caption below.
+
+    IEEE conventions (from rules/ieee.json):
+      - label_prefix: "TABLE"  (UPPERCASE)
+      - label bold, NOT italic
+      - caption centered, above table
+      - numbering: roman (I, II, III...)
+      - border_style: full_grid
+    """
+    label_prefix = tbl_rules.get("label_prefix", "TABLE")
+    label_bold = tbl_rules.get("label_bold", True)
+    label_italic = tbl_rules.get("label_italic", False)
+    caption_italic = tbl_rules.get("caption_italic", False)
+    caption_align = tbl_rules.get("caption_alignment", "center")
+    numbering = tbl_rules.get("numbering", "roman")
+
+    number = section.get("number", "")
+    caption = section.get("caption", section.get("content", ""))
+
+    # Convert to roman numeral if needed
+    if numbering == "roman" and number:
+        number = _to_roman(number)
+
+    label_text = f"{label_prefix} {number}" if number else label_prefix
+
+    # Line 1: "TABLE I" (label)
+    label_para = doc.add_paragraph()
+    if caption_align == "center":
+        label_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _apply_line_spacing(label_para.paragraph_format, line_spacing)
+    label_para.paragraph_format.space_before = Pt(6)
+    label_para.paragraph_format.space_after = Pt(0)
+    label_run = label_para.add_run(label_text)
+    _apply_font(label_run, font_name, font_size, bold=label_bold, italic=label_italic)
+
+    # Line 2: caption text
+    if caption:
+        cap_para = doc.add_paragraph()
+        if caption_align == "center":
+            cap_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        _apply_line_spacing(cap_para.paragraph_format, line_spacing)
+        cap_para.paragraph_format.space_before = Pt(0)
+        cap_para.paragraph_format.space_after = Pt(6)
+        cap_run = cap_para.add_run(caption)
+        _apply_font(cap_run, font_name, font_size, bold=False, italic=caption_italic)
+
+
+def _to_roman(number) -> str:
+    """Convert integer or string number to roman numeral."""
+    try:
+        n = int(number)
+    except (TypeError, ValueError):
+        return str(number)
+    vals = [(1000, 'M'), (900, 'CM'), (500, 'D'), (400, 'CD'),
+            (100, 'C'), (90, 'XC'), (50, 'L'), (40, 'XL'),
+            (10, 'X'), (9, 'IX'), (5, 'V'), (4, 'IV'), (1, 'I')]
+    result = ""
+    for val, sym in vals:
+        while n >= val:
+            result += sym
+            n -= val
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GENERIC WRITER (fallback for Vancouver, Springer, Chicago, etc.)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def write_formatted_docx(instructions: dict, output_path: str) -> str:
+    """
+    Generic DOCX writer for journals without a dedicated builder.
+
+    Handles flat section lists (title, heading, paragraph, reference, etc.)
+    driven by rules from rules/*.json. Used as fallback for Vancouver,
+    Springer, Chicago, and other formats not yet having dedicated builders.
+    """
+    if not instructions or not instructions.get("sections"):
+        raise DocumentWriteError("docx_instructions must contain a non-empty 'sections' list.")
+
+    sections = instructions.get("sections", [])
+
+    # Rules-driven generic format
+    rules = instructions.get("rules", {}) or {}
+
+    # Improvement 11: Template-aware document generation
+    style_name = (rules.get("style_name") or "Standard").strip()
+    template_path = Path(__file__).parent.parent / "templates" / f"{style_name}.docx"
+    
+    if template_path.exists():
+        logger.info("[DOCX] Using journal template: %s", template_path.name)
+        doc = Document(str(template_path))
+    else:
+        logger.debug("[DOCX] No template found for '%s' — using blank document", style_name)
+        doc = Document()
+
+    doc_rules = rules.get("document", {})
+    font_name = doc_rules.get("font", "Times New Roman")
+    font_size = _safe_int(doc_rules.get("font_size", 12), 12)
+    line_spacing = _safe_float(doc_rules.get("line_spacing", 2.0), 2.0)
+    margins = doc_rules.get("margins", {})
+    columns = _safe_int(doc_rules.get("columns", 1), 1)
+    doc_alignment = doc_rules.get("alignment", "justify")
+
+    _apply_document_defaults(doc, font_name, font_size, line_spacing)
+    _set_document_margins(doc, margins)
+    _set_columns(doc, columns)
+
+    for section in sections:
+        section_type = section.get("type", "paragraph")
+        content = section.get("content", "")
+        if content is None:
+            content = ""
+
+        try:
+            if section_type == "title":
+                title_rules = rules.get("title_page", {})
+                _add_title(doc, content, title_rules, font_name, font_size)
+            elif section_type == "heading":
+                level = _safe_int(section.get("level", 1), 1)
+                heading_rules = rules.get("headings", {}).get(f"H{level}", {})
+                _add_heading(doc, content, level, heading_rules, font_name, font_size)
+            elif section_type == "abstract":
+                abstract_rules = rules.get("abstract", {})
+                _add_abstract(doc, content, abstract_rules, font_name, font_size, line_spacing)
+            elif section_type == "keywords":
+                kw_rules = rules.get("keywords_section", rules.get("abstract", {}))
+                _add_keywords(doc, content, kw_rules, font_name, font_size)
             elif section_type == "reference":
                 ref_rules = rules.get("references", {})
                 _add_reference(doc, content, ref_rules, font_name, font_size)
@@ -474,18 +690,18 @@ def write_formatted_docx(instructions: dict, output_path: str) -> str:
                 tbl_rules = rules.get("tables", {})
                 _add_table_caption(doc, content, tbl_rules, font_name, font_size)
             else:
-                _add_paragraph(doc, content, font_name, font_size, line_spacing)
+                _add_paragraph(doc, content, font_name, font_size, line_spacing, doc_alignment)
         except Exception as e:
             logger.warning("[DOCX] Failed to render section type=%s: %s", section_type, e)
             try:
-                _add_paragraph(doc, content, font_name, font_size, line_spacing)
+                _add_paragraph(doc, content, font_name, font_size, line_spacing, doc_alignment)
             except Exception:
                 pass
 
     out = Path(output_path).resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(out))
-    logger.info("DOCX written | file=%s | sections=%d", out.name, len(sections))
+    logger.info("[DOCX_GENERIC] Written | file=%s | sections=%d", out.name, len(sections))
     return str(out)
 
 
@@ -502,6 +718,18 @@ def _apply_document_defaults(doc: Document, font_name: str, font_size: int, line
         _apply_line_spacing(pf, line_spacing)
     except Exception as e:
         logger.warning("[DOCX] Could not set document defaults: %s", e)
+
+
+def _set_columns(doc: Document, columns: int) -> None:
+    """Set the number of columns for the entire document."""
+    if columns <= 1:
+        return
+    try:
+        section = doc.sections[0]
+        cols = section._sectPr.xpath('./w:cols')[0]
+        cols.set(qn('w:num'), str(columns))
+    except Exception as e:
+        logger.warning("[DOCX] Could not set columns: %s", e)
 
 
 def _set_document_margins(doc: Document, margins: dict) -> None:
@@ -596,18 +824,34 @@ def _apply_case_transform(text: str, case_rule: str) -> str:
     return text
 
 
-def _add_paragraph(doc: Document, text: str, font_name: str, font_size: int, line_spacing: float) -> None:
+def _add_paragraph(doc: Document, text: str, font_name: str, font_size: int, line_spacing: float, alignment: str = "justify") -> None:
     para = doc.add_paragraph()
     run = para.add_run(text)
     _apply_font(run, font_name, font_size)
+    
+    if alignment == "justify":
+        para.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    elif alignment == "center":
+        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    elif alignment == "right":
+        para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    elif alignment == "left":
+        para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        
     _apply_line_spacing(para.paragraph_format, line_spacing)
 
 
-def _add_title(doc: Document, text: str, font_name: str, font_size: int) -> None:
+def _add_title(doc: Document, text: str, title_rules: dict, font_name: str, font_size: int) -> None:
     para = doc.add_paragraph()
-    para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    centered = title_rules.get("title_centered", True)
+    bold = title_rules.get("title_bold", False)
+    size = title_rules.get("title_font_size", 24)
+
+    if centered:
+        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
     run = para.add_run(text)
-    _apply_font(run, font_name, font_size, bold=True)
+    _apply_font(run, font_name, size, bold=bold)
 
 
 def _add_heading(doc: Document, text: str, level: int, heading_rules: dict, font_name: str, font_size: int) -> None:
@@ -627,18 +871,26 @@ def _add_heading(doc: Document, text: str, level: int, heading_rules: dict, font
 def _add_abstract(doc: Document, text: str, abstract_rules: dict, font_name: str, font_size: int, line_spacing: float) -> None:
     label = abstract_rules.get("label", "Abstract")
     label_bold = abstract_rules.get("label_bold", False)
+    label_italic = abstract_rules.get("label_italic", False)
     centered = abstract_rules.get("label_centered", True)
 
     label_para = doc.add_paragraph()
     if centered:
         label_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
     label_run = label_para.add_run(label)
-    _apply_font(label_run, font_name, font_size, bold=label_bold)
+    _apply_font(label_run, font_name, font_size, bold=label_bold, italic=label_italic)
 
     body_para = doc.add_paragraph()
     body_run = body_para.add_run(text)
     _apply_font(body_run, font_name, font_size)
     _apply_line_spacing(body_para.paragraph_format, line_spacing)
+
+
+def _add_keywords(doc: Document, text: str, rules: dict, font_name: str, font_size: int) -> None:
+    label = rules.get("keywords_label", "Index Terms—")
+    para = doc.add_paragraph()
+    run = para.add_run(label + " " + text)
+    _apply_font(run, font_name, font_size)
 
 
 def _add_reference(doc: Document, text: str, ref_rules: dict, font_name: str, font_size: int) -> None:
@@ -648,14 +900,20 @@ def _add_reference(doc: Document, text: str, ref_rules: dict, font_name: str, fo
     if hanging:
         para.paragraph_format.left_indent = Inches(hanging_inches)
         para.paragraph_format.first_line_indent = Inches(-hanging_inches)
-    run = para.add_run(text)
-    _apply_font(run, font_name, font_size)
+    _add_text_with_italics(para, text, font_name=font_name, font_size_pt=font_size)
 
 
 def _add_figure_caption(doc: Document, text: str, fig_rules: dict, font_name: str, font_size: int) -> None:
     para = doc.add_paragraph()
     bold = fig_rules.get("label_bold", True)
     italic = fig_rules.get("caption_italic", False)
+    alignment = fig_rules.get("caption_alignment", "center")
+    
+    if alignment == "center":
+        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    elif alignment == "left":
+        para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        
     run = para.add_run(text)
     _apply_font(run, font_name, font_size - 1, bold=bold, italic=italic)
 
@@ -663,6 +921,13 @@ def _add_figure_caption(doc: Document, text: str, fig_rules: dict, font_name: st
 def _add_table_caption(doc: Document, text: str, tbl_rules: dict, font_name: str, font_size: int) -> None:
     para = doc.add_paragraph()
     bold = tbl_rules.get("label_bold", True)
+    alignment = tbl_rules.get("caption_alignment", "center")
+    
+    if alignment == "center":
+        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    elif alignment == "left":
+        para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        
     run = para.add_run(text)
     _apply_font(run, font_name, font_size - 1, bold=bold)
 

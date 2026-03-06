@@ -185,6 +185,6 @@ def create_interpret_agent(llm: Any) -> Agent:
         llm=llm,
         tools=[load_journal_rules, extract_journal_rules_from_url],
         allow_delegation=False,
-        verbose=True,
+        verbose=False,
         max_iter=3,
     )

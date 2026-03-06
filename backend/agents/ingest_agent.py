@@ -187,7 +187,9 @@ def create_ingest_agent(llm: Any) -> Agent:
             "markers that guide the downstream Parse agent in extracting the paper's metadata. "
             "You detect citation styles (numbered vs author-date) and source formats (NLM vs APA) "
             "automatically. You recognize that PNAS, Nature, Science, Cell papers use NLM/Vancouver "
-            "numbered citations which must be flagged for downstream conversion to APA author-date format."
+            "numbered citations which must be flagged for downstream conversion to APA author-date format. "
+            "When input is very large, you ensure that you label EVERY section "
+            "and block without skipping or truncating content."
         ),
         llm=llm,
         allow_delegation=False,

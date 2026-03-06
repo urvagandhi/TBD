@@ -1,6 +1,5 @@
 {
-  "style_name": "Chicago 17th Edition",
-
+  "style_name": "Chicago 17th Edition (Author-Date)",
   "document": {
     "font": "Times New Roman",
     "font_size": 12,
@@ -14,26 +13,21 @@
     "alignment": "left",
     "columns": 1
   },
-
   "title_page": {
     "title_case": "Title Case",
     "title_bold": false,
     "title_centered": true,
     "title_font_size": 12
   },
-
   "abstract": {
     "label": "Abstract",
     "label_bold": false,
     "label_centered": true,
     "label_italic": false,
-    "max_words": 300,
+    "max_words": null,
     "indent_first_line": true,
-    "keywords_present": false,
-    "keywords_label": "Keywords:",
-    "keywords_italic": false
+    "keywords_present": false
   },
-
   "headings": {
     "H1": {
       "bold": true,
@@ -47,7 +41,7 @@
     "H2": {
       "bold": false,
       "italic": false,
-      "centered": true,
+      "centered": false,
       "underline": false,
       "case": "Title Case",
       "numbering": "none",
@@ -65,7 +59,6 @@
       "font_size": 12
     }
   },
-
   "citations": {
     "style": "author-date",
     "brackets": "parentheses",
@@ -76,7 +69,6 @@
     "include_page_for_quotes": true,
     "page_format": "45"
   },
-
   "references": {
     "section_label": "References",
     "label_bold": false,
@@ -88,14 +80,13 @@
     "line_spacing": 1.0,
     "space_between_entries": true,
     "formats": {
-      "journal_article": "Author, First. Year. \"Title of Article.\" Journal Name Volume (Issue): Page\u2013Page. https://doi.org/xxxxx.",
+      "journal_article": "Author, First. Year. \"Title of Article.\" Journal Name Volume (Issue): Page–Page. https://doi.org/xxxxx.",
       "book": "Author, First. Year. Title of Book. City: Publisher.",
-      "book_chapter": "Author, First. Year. \"Title of Chapter.\" In Title of Book, edited by First Editor, Page\u2013Page. City: Publisher.",
+      "book_chapter": "Author, First. Year. \"Title of Chapter.\" In Title of Book, edited by First Editor, Page–Page. City: Publisher.",
       "website": "Author, First. Year. \"Title of Page.\" Name of Site. Month Day, Year. URL.",
-      "conference_paper": "Author, First. Year. \"Title of Paper.\" Paper presented at Conference Name, City, Month Day\u2013Day."
+      "conference_paper": "Author, First. Year. \"Title of Paper.\" Paper presented at Conference Name, City, Month Day–Day."
     }
   },
-
   "figures": {
     "label_prefix": "Figure",
     "label_bold": false,
@@ -106,7 +97,6 @@
     "numbering": "arabic",
     "note_label": "Note:"
   },
-
   "tables": {
     "label_prefix": "Table",
     "label_bold": false,
@@ -118,12 +108,10 @@
     "border_style": "top_bottom_only",
     "note_label": "Note:"
   },
-
   "equations": {
     "numbering": "right_aligned",
     "numbering_format": "(1)"
   },
-
   "general_rules": {
     "doi_format": "https://doi.org/xxxxx",
     "url_format": "direct url",
