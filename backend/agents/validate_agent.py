@@ -18,13 +18,13 @@ logger = get_logger(__name__)
 
 # Weights for overall_score calculation — must sum to 1.0
 SECTION_WEIGHTS = {
-    "document_format": 0.10,
-    "abstract":        0.10,
-    "headings":        0.15,
-    "citations":       0.25,
-    "references":      0.25,
-    "figures":         0.075,
-    "tables":          0.075,
+    "document_format": 0.18,
+    "abstract":        0.12,
+    "headings":        0.13,
+    "citations":       0.22,
+    "references":      0.22,
+    "figures":         0.065,
+    "tables":          0.065,
 }
 
 assert abs(sum(SECTION_WEIGHTS.values()) - 1.0) < 1e-9, (
@@ -126,7 +126,7 @@ VALIDATE_SYSTEM_PROMPT = """You are an APA 7th Edition compliance scorer. Score 
 
 ## 7 COMPLIANCE CHECKS
 
-### CHECK 1 — Citations (weight: 25%)
+### CHECK 1 — Citations (weight: 22%)
 ✓ ALL citations use author-date: (Author, Year)
 ✓ 2 authors: & in parenthetical, "and" in narrative
 ✓ 3+ authors: "et al." with period
@@ -134,7 +134,7 @@ VALIDATE_SYSTEM_PROMPT = """You are an APA 7th Edition compliance scorer. Score 
 ✓ Every citation has matching reference
 Scoring: 100 base. -10 per numbered citation remaining. -5 per format error.
 
-### CHECK 2 — References (weight: 25%)
+### CHECK 2 — References (weight: 22%)
 ✓ APA format: Author, F. M. (Year). Title. *Journal*, *Vol*(Issue), pages.
 ✓ Alphabetical order by first author
 ✓ Hanging indent specified
@@ -145,14 +145,17 @@ Scoring: 100 base. -10 per numbered citation remaining. -5 per format error.
 ✓ Every reference cited in text
 Scoring: 100 base. -5 per format error. -10 per missing field.
 
-### CHECK 3 — Headings (weight: 15%)
+### CHECK 3 — Headings (weight: 13%)
 ✓ H1: bold + centered + Title Case + NOT italic
 ✓ H2: bold + flush left + Title Case + NOT italic
-✓ H3: bold + italic + flush left + Title Case
+✓ H3: bold + italic + flush left + indented + Title Case + inline with text
+✓ H4: bold + NOT italic + indented + Title Case + inline with text + ends with period
+✓ H5: bold + italic + indented + Title Case + inline with text + ends with period
 ✓ IMRAD present (Introduction/Method/Results/Discussion)
-Scoring: 100 base. -25 per missing IMRAD section. -10 per wrong heading format.
+✓ APA §2.27 Note: "Introduction" should NOT appear as a heading. Body text begins after the repeated title. Deduct -15 if "Introduction" appears as an H1 heading.
+Scoring: 100 base. -25 per missing IMRAD section. -15 for Introduction heading present. -10 per wrong heading format.
 
-### CHECK 4 — Document Format (weight: 10%)
+### CHECK 4 — Document Format (weight: 18%)
 ✓ font = "Times New Roman"
 ✓ font_size = 24 half-points (12pt)
 ✓ line_spacing = 480 twips (double)
@@ -162,28 +165,28 @@ Scoring: 100 base. -25 per missing IMRAD section. -10 per wrong heading format.
 ✓ alignment = "left"
 Scoring: 100 base. -15 per wrong setting.
 
-### CHECK 5 — Abstract (weight: 10%)
+### CHECK 5 — Abstract (weight: 12%)
 ✓ Word count ≤ 250
 ✓ "Abstract" label: bold + centered
 ✓ Body: no first-line indent
 ✓ Keywords present with italic label
 Scoring: 100 base. -15 if over word limit. -10 per missing element.
 
-### CHECK 6 — Figures (weight: 7.5%)
+### CHECK 6 — Figures (weight: 6.5%)
 ✓ "Figure N" label (not "Fig.")
 ✓ Label bold, caption italic
 ✓ Position: below figure
 ✓ Sequential numbering
 Scoring: 100 base. -10 per violation.
 
-### CHECK 7 — Tables (weight: 7.5%)
+### CHECK 7 — Tables (weight: 6.5%)
 ✓ "Table N" label bold, caption italic
 ✓ Position: above table
 ✓ Sequential numbering
 Scoring: 100 base. -10 per violation.
 
 ## SCORING FORMULA
-overall = (citations × 0.25) + (references × 0.25) + (headings × 0.15) + (doc_format × 0.10) + (abstract × 0.10) + (figures × 0.075) + (tables × 0.075)
+overall = (citations × 0.22) + (references × 0.22) + (doc_format × 0.18) + (headings × 0.13) + (abstract × 0.12) + (figures × 0.065) + (tables × 0.065)
 
 submission_ready = overall ≥ 80
 

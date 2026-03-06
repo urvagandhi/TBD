@@ -17,6 +17,7 @@ Three dedicated builders + in-place mode:
 Routing is handled by crew.py via style_key from detect_style().
 """
 import re
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Optional
 
@@ -34,11 +35,24 @@ logger = get_logger(__name__)
 _CASE_OPTIONS = {"Title Case", "UPPERCASE", "Sentence case", "lowercase"}
 
 
+def _media_lookup(store: Optional[dict], key) -> Optional[dict]:
+    """Look up media by key, trying both original type and int conversion."""
+    if not store or key == "" or key is None:
+        return None
+    result = store.get(key)
+    if result:
+        return result
+    try:
+        return store.get(int(key))
+    except (ValueError, TypeError):
+        return None
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # APA-SPECIFIC DOCX BUILDER (from APA Pipeline Prompts §6)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def build_apa_docx(transform_output: dict, output_path: str) -> str:
+def build_apa_docx(transform_output: dict, output_path: str, image_store: Optional[dict] = None, table_store: Optional[dict] = None) -> str:
     """Main entry point: takes TRANSFORM agent JSON → produces APA DOCX file."""
 
     instructions = transform_output.get("docx_instructions", transform_output)
@@ -86,11 +100,11 @@ def build_apa_docx(transform_output: dict, output_path: str) -> str:
         elif section_type == "abstract_page":
             _write_abstract_page(doc, section_data, instructions)
         elif section_type == "body":
-            _write_body(doc, section_data, instructions)
+            _write_body(doc, section_data, instructions, image_store=image_store, table_store=table_store)
         elif section_type == "references_page":
             _write_references_page(doc, section_data, instructions)
         else:
-            _write_body(doc, section_data, instructions)
+            _write_body(doc, section_data, instructions, image_store=image_store, table_store=table_store)
 
         first_section = False
 
@@ -151,6 +165,32 @@ def _configure_heading_styles(doc):
     h3.paragraph_format.space_after = Pt(0)
     h3.paragraph_format.line_spacing = 2.0
     h3.paragraph_format.first_line_indent = Inches(0.5)
+
+    # H4: Bold, 0.5" indent, Title Case, inline with text, ends with period
+    h4 = doc.styles['Heading 4']
+    h4.font.name = 'Times New Roman'
+    h4.font.size = Pt(12)
+    h4.font.bold = True
+    h4.font.italic = False
+    h4.font.color.rgb = RGBColor(0, 0, 0)
+    h4.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    h4.paragraph_format.space_before = Pt(0)
+    h4.paragraph_format.space_after = Pt(0)
+    h4.paragraph_format.line_spacing = 2.0
+    h4.paragraph_format.first_line_indent = Inches(0.5)
+
+    # H5: Bold Italic, 0.5" indent, Title Case, inline with text, ends with period
+    h5 = doc.styles['Heading 5']
+    h5.font.name = 'Times New Roman'
+    h5.font.size = Pt(12)
+    h5.font.bold = True
+    h5.font.italic = True
+    h5.font.color.rgb = RGBColor(0, 0, 0)
+    h5.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    h5.paragraph_format.space_before = Pt(0)
+    h5.paragraph_format.space_after = Pt(0)
+    h5.paragraph_format.line_spacing = 2.0
+    h5.paragraph_format.first_line_indent = Inches(0.5)
 
 
 def _write_title_page(doc, section_data, instructions, is_first):
@@ -256,7 +296,7 @@ def _write_abstract_page(doc, section_data, instructions):
             run2.font.size = Pt(12)
 
 
-def _write_body(doc, section_data, instructions):
+def _write_body(doc, section_data, instructions, image_store=None, table_store=None):
     """Write all body content (intro through discussion)."""
     doc.add_section()
     # Support both field names: body_first_line_indent_dxa (MD prompt) and body_first_line_indent (legacy)
@@ -280,12 +320,44 @@ def _write_body(doc, section_data, instructions):
 
         elif etype == "heading":
             level = element.get("level", 1)
-            level = min(max(level, 1), 3)
-            p = doc.add_heading(element.get("text", ""), level=level)
-            for run in p.runs:
-                run.font.color.rgb = RGBColor(0, 0, 0)
-                run.font.name = 'Times New Roman'
-                run.font.size = Pt(12)
+            level = min(max(level, 1), 5)
+            is_inline = element.get("inline_with_text", False) or level >= 3
+            following_text = element.get("following_text", "")
+
+            if is_inline and level >= 3:
+                # APA H3-H5: inline heading — heading and body text in SAME paragraph
+                p = doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                p.paragraph_format.line_spacing = 2.0
+                p.paragraph_format.space_before = Pt(0)
+                p.paragraph_format.space_after = Pt(0)
+                p.paragraph_format.first_line_indent = Inches(0.5)
+
+                heading_text = element.get("text", "")
+                if not heading_text.endswith("."):
+                    heading_text += "."
+
+                h_run = p.add_run(heading_text)
+                h_run.bold = True
+                h_run.font.name = 'Times New Roman'
+                h_run.font.size = Pt(12)
+                h_run.font.color.rgb = RGBColor(0, 0, 0)
+                if level in (3, 5):
+                    h_run.italic = True
+
+                if following_text:
+                    space_run = p.add_run("  ")
+                    space_run.font.name = 'Times New Roman'
+                    space_run.font.size = Pt(12)
+                    _add_text_with_italics(p, following_text)
+            else:
+                # APA H1/H2: separate paragraph headings
+                capped_level = min(level, 3)
+                p = doc.add_heading(element.get("text", ""), level=capped_level)
+                for run in p.runs:
+                    run.font.color.rgb = RGBColor(0, 0, 0)
+                    run.font.name = 'Times New Roman'
+                    run.font.size = Pt(12)
 
         elif etype == "body_paragraph":
             p = doc.add_paragraph()
@@ -296,43 +368,167 @@ def _write_body(doc, section_data, instructions):
             p.paragraph_format.first_line_indent = indent
             _add_text_with_italics(p, element.get("text", ""))
 
-        elif etype == "figure_caption":
-            p = doc.add_paragraph()
-            p.paragraph_format.line_spacing = 2.0
-            p.paragraph_format.first_line_indent = Inches(0)
-            label = element.get("label", f"Figure {element.get('number', '')}")
-            run = p.add_run(label)
-            run.bold = True
-            run.font.name = 'Times New Roman'
-            run.font.size = Pt(12)
-            caption = element.get("caption", "")
-            if caption:
-                p2 = doc.add_paragraph()
-                p2.paragraph_format.line_spacing = 2.0
-                p2.paragraph_format.first_line_indent = Inches(0)
-                run2 = p2.add_run(caption)
-                run2.italic = True
-                run2.font.name = 'Times New Roman'
-                run2.font.size = Pt(12)
+        elif etype in ("figure_caption", "figure_block"):
+            _render_figure_block_apa(doc, element, image_store)
 
-        elif etype == "table_caption":
-            p = doc.add_paragraph()
-            p.paragraph_format.line_spacing = 2.0
-            p.paragraph_format.first_line_indent = Inches(0)
-            label = element.get("label", f"Table {element.get('number', '')}")
-            run = p.add_run(label)
-            run.bold = True
-            run.font.name = 'Times New Roman'
-            run.font.size = Pt(12)
-            caption = element.get("caption", "")
-            if caption:
-                p2 = doc.add_paragraph()
-                p2.paragraph_format.line_spacing = 2.0
-                p2.paragraph_format.first_line_indent = Inches(0)
-                run2 = p2.add_run(caption)
-                run2.italic = True
-                run2.font.name = 'Times New Roman'
-                run2.font.size = Pt(12)
+        elif etype in ("table_caption", "table_block"):
+            _render_table_block_apa(doc, element, table_store)
+
+
+def _render_figure_block_apa(doc, element: dict, image_store: Optional[dict] = None) -> None:
+    """
+    APA §7.4 compliant figure block:
+      [Image — centered]
+      Figure N         ← bold, flush left
+      Caption text     ← italic, flush left
+    """
+    fig_num = element.get("number", "")
+    image_data = _media_lookup(image_store, fig_num)
+
+    # Step 1: Insert actual image if available
+    if image_data and image_data.get("bytes"):
+        img_para = doc.add_paragraph()
+        img_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        img_para.paragraph_format.line_spacing = 2.0
+        img_para.paragraph_format.space_before = Pt(12)
+        img_para.paragraph_format.first_line_indent = Inches(0)
+        run = img_para.add_run()
+
+        # Scale to max text width (6.5" for US Letter with 1" margins)
+        max_width = 6.5
+        img_w = image_data.get("width", 0)
+        img_h = image_data.get("height", 0)
+
+        if img_w > 0:
+            # For DOCX sources, dimensions are in EMU (914400 EMU = 1 inch)
+            if "width_emu" in image_data:
+                display_width = min(max_width, image_data["width_emu"] / 914400)
+            else:
+                display_width = min(max_width, img_w / 96)
+        else:
+            display_width = max_width
+
+        try:
+            run.add_picture(BytesIO(image_data["bytes"]), width=Inches(display_width))
+            logger.info("[DOCX] Inserted Figure %s image (%dx%d)", fig_num, img_w, img_h)
+        except Exception as e:
+            logger.warning("[DOCX] Failed to insert Figure %s image: %s", fig_num, e)
+            run.text = f"[Figure {fig_num} — image could not be rendered]"
+            run.italic = True
+    else:
+        # Placeholder when no image was extracted
+        placeholder = doc.add_paragraph()
+        placeholder.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        placeholder.paragraph_format.line_spacing = 2.0
+        placeholder.paragraph_format.first_line_indent = Inches(0)
+        run = placeholder.add_run(f"[Figure {fig_num} — image not available in source]")
+        run.italic = True
+        run.font.name = "Times New Roman"
+        run.font.size = Pt(12)
+
+    # Step 2: "Figure N" — bold, flush left
+    label_para = doc.add_paragraph()
+    label_para.paragraph_format.line_spacing = 2.0
+    label_para.paragraph_format.first_line_indent = Inches(0)
+    label = element.get("label", f"Figure {fig_num}")
+    label_run = label_para.add_run(label)
+    label_run.bold = True
+    label_run.font.name = "Times New Roman"
+    label_run.font.size = Pt(12)
+
+    # Step 3: Caption — italic, flush left
+    caption = element.get("caption", "")
+    if caption:
+        cap_para = doc.add_paragraph()
+        cap_para.paragraph_format.line_spacing = 2.0
+        cap_para.paragraph_format.first_line_indent = Inches(0)
+        cap_run = cap_para.add_run(caption)
+        cap_run.italic = True
+        cap_run.font.name = "Times New Roman"
+        cap_run.font.size = Pt(12)
+
+    # Blank line after figure block
+    doc.add_paragraph()
+
+
+def _render_table_block_apa(doc, element: dict, table_store: Optional[dict] = None) -> None:
+    """
+    APA §7.22 compliant table block:
+      Table N         ← bold, flush left
+      Caption text    ← italic, flush left  (ABOVE table)
+      [Table data]
+      Note.           ← if present
+    """
+    tbl_num = element.get("number", "")
+    table_data = _media_lookup(table_store, tbl_num)
+
+    # Step 1: "Table N" — bold, flush left (ABOVE table per APA)
+    label_para = doc.add_paragraph()
+    label_para.paragraph_format.line_spacing = 2.0
+    label_para.paragraph_format.first_line_indent = Inches(0)
+    label = element.get("label", f"Table {tbl_num}")
+    label_run = label_para.add_run(label)
+    label_run.bold = True
+    label_run.font.name = "Times New Roman"
+    label_run.font.size = Pt(12)
+
+    # Step 2: Caption — italic, flush left (also ABOVE table)
+    caption = element.get("caption", "")
+    if caption:
+        cap_para = doc.add_paragraph()
+        cap_para.paragraph_format.line_spacing = 2.0
+        cap_para.paragraph_format.first_line_indent = Inches(0)
+        cap_run = cap_para.add_run(caption)
+        cap_run.italic = True
+        cap_run.font.name = "Times New Roman"
+        cap_run.font.size = Pt(12)
+
+    # Step 3: Render actual table if data available
+    rows = None
+    if table_data and table_data.get("rows"):
+        rows = table_data["rows"]
+    elif element.get("rows"):
+        rows = element["rows"]
+
+    if rows and len(rows) > 0:
+        try:
+            num_cols = max(len(r) for r in rows)
+            table = doc.add_table(rows=len(rows), cols=num_cols)
+            table.style = "Table Grid"
+
+            for r_idx, row_data in enumerate(rows):
+                row = table.rows[r_idx]
+                for c_idx in range(num_cols):
+                    cell_text = row_data[c_idx] if c_idx < len(row_data) else ""
+                    cell = row.cells[c_idx]
+                    cell.text = str(cell_text) if cell_text else ""
+                    # Bold header row
+                    if r_idx == 0:
+                        for para in cell.paragraphs:
+                            for run in para.runs:
+                                run.bold = True
+                                run.font.name = "Times New Roman"
+                                run.font.size = Pt(12)
+                    else:
+                        for para in cell.paragraphs:
+                            for run in para.runs:
+                                run.font.name = "Times New Roman"
+                                run.font.size = Pt(12)
+
+            logger.info("[DOCX] Inserted Table %s with %d rows × %d cols", tbl_num, len(rows), num_cols)
+        except Exception as e:
+            logger.warning("[DOCX] Failed to render Table %s: %s", tbl_num, e)
+            p = doc.add_paragraph(f"[Table {tbl_num} — could not render table data]")
+            p.runs[0].italic = True
+    else:
+        p = doc.add_paragraph(f"[Table {tbl_num} — data not available in source]")
+        p.paragraph_format.first_line_indent = Inches(0)
+        p.runs[0].italic = True
+        p.runs[0].font.name = "Times New Roman"
+        p.runs[0].font.size = Pt(12)
+
+    # Blank line after table block
+    doc.add_paragraph()
 
 
 def _write_references_page(doc, section_data, instructions):
@@ -365,17 +561,27 @@ def _write_references_page(doc, section_data, instructions):
             _add_text_with_italics(p, element.get("text", ""))
 
 
-def _add_text_with_italics(paragraph, text, font_name='Times New Roman', font_size_pt=12):
-    """Parse *italic* markers and create appropriate runs."""
+def _add_text_with_italics(paragraph, text, font_name='Times New Roman', font_size_pt=12, base_bold=False):
+    """Parse *italic*, **bold**, and ***bold+italic*** markers and create appropriate runs."""
     if not text:
         return
-    parts = re.split(r'(\*[^*]+\*)', text)
+    # Match ***bold+italic***, **bold**, or *italic* markers
+    parts = re.split(r'(\*{1,3}[^*]+\*{1,3})', text)
     for part in parts:
-        if part.startswith('*') and part.endswith('*') and len(part) > 2:
+        if part.startswith('***') and part.endswith('***') and len(part) > 6:
+            run = paragraph.add_run(part[3:-3])
+            run.bold = True
+            run.italic = True
+        elif part.startswith('**') and part.endswith('**') and len(part) > 4:
+            run = paragraph.add_run(part[2:-2])
+            run.bold = True
+        elif part.startswith('*') and part.endswith('*') and len(part) > 2:
             run = paragraph.add_run(part[1:-1])
             run.italic = True
         else:
             run = paragraph.add_run(part)
+            if base_bold:
+                run.bold = True
         run.font.name = font_name
         run.font.size = Pt(font_size_pt)
 
@@ -419,7 +625,7 @@ def _add_page_number_header(section):
 # IEEE-SPECIFIC DOCX BUILDER
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def build_ieee_docx(instructions: dict, output_path: str) -> str:
+def build_ieee_docx(instructions: dict, output_path: str, image_store: Optional[dict] = None, table_store: Optional[dict] = None) -> str:
     """
     IEEE-specific DOCX builder.
 
@@ -488,10 +694,12 @@ def build_ieee_docx(instructions: dict, output_path: str) -> str:
             elif section_type == "reference":
                 ref_rules = rules.get("references", {})
                 _add_reference(doc, content, ref_rules, font_name, font_size)
-            elif section_type == "figure_caption":
+            elif section_type in ("figure_caption", "figure_block"):
+                _render_figure_image(doc, section, image_store, font_name, font_size)
                 _add_ieee_figure_caption(doc, section, fig_rules, font_name, font_size, line_spacing)
-            elif section_type == "table_caption":
+            elif section_type in ("table_caption", "table_block"):
                 _add_ieee_table_caption(doc, section, tbl_rules, font_name, font_size, line_spacing)
+                _render_table_data(doc, section, table_store, font_name, font_size)
             else:
                 _add_paragraph(doc, content, font_name, font_size, line_spacing, doc_alignment)
         except Exception as e:
@@ -506,6 +714,75 @@ def build_ieee_docx(instructions: dict, output_path: str) -> str:
     doc.save(str(out))
     logger.info("[DOCX_IEEE] Written | file=%s | sections=%d", out.name, len(sections))
     return str(out)
+
+
+def _render_figure_image(
+    doc: Document, section: dict, image_store: Optional[dict],
+    font_name: str, font_size: int,
+) -> None:
+    """Insert actual image above caption (shared by IEEE/generic writers)."""
+    fig_num = section.get("number", "")
+    image_data = _media_lookup(image_store, fig_num)
+    if not image_data or not image_data.get("bytes"):
+        return
+
+    img_para = doc.add_paragraph()
+    img_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    img_para.paragraph_format.space_before = Pt(6)
+    img_para.paragraph_format.space_after = Pt(6)
+    run = img_para.add_run()
+
+    max_width = 3.0  # Narrower for 2-column layouts
+    img_w = image_data.get("width", 0)
+    if "width_emu" in image_data:
+        display_width = min(max_width, image_data["width_emu"] / 914400)
+    elif img_w > 0:
+        display_width = min(max_width, img_w / 96)
+    else:
+        display_width = max_width
+
+    try:
+        run.add_picture(BytesIO(image_data["bytes"]), width=Inches(display_width))
+        logger.info("[DOCX] Inserted Figure %s image", fig_num)
+    except Exception as e:
+        logger.warning("[DOCX] Failed to insert Figure %s image: %s", fig_num, e)
+
+
+def _render_table_data(
+    doc: Document, section: dict, table_store: Optional[dict],
+    font_name: str, font_size: int,
+) -> None:
+    """Insert actual table data below caption (shared by IEEE/generic writers)."""
+    tbl_num = section.get("number", "")
+    table_data = _media_lookup(table_store, tbl_num)
+
+    rows = None
+    if table_data and table_data.get("rows"):
+        rows = table_data["rows"]
+    elif section.get("rows"):
+        rows = section["rows"]
+
+    if not rows:
+        return
+
+    try:
+        num_cols = max(len(r) for r in rows)
+        table = doc.add_table(rows=len(rows), cols=num_cols)
+        table.style = "Table Grid"
+
+        for r_idx, row_data in enumerate(rows):
+            row = table.rows[r_idx]
+            for c_idx in range(num_cols):
+                cell_text = row_data[c_idx] if c_idx < len(row_data) else ""
+                cell = row.cells[c_idx]
+                cell.text = str(cell_text) if cell_text else ""
+                for para in cell.paragraphs:
+                    for run in para.runs:
+                        _apply_font(run, font_name, font_size, bold=(r_idx == 0))
+
+        logger.info("[DOCX] Inserted Table %s with %d rows × %d cols", tbl_num, len(rows), num_cols)
+    except Exception as e:
+        logger.warning("[DOCX] Failed to render Table %s: %s", tbl_num, e)
 
 
 def _add_ieee_figure_caption(
@@ -623,7 +900,7 @@ def _to_roman(number) -> str:
 # GENERIC WRITER (fallback for Vancouver, Springer, Chicago, etc.)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def write_formatted_docx(instructions: dict, output_path: str) -> str:
+def write_formatted_docx(instructions: dict, output_path: str, image_store: Optional[dict] = None, table_store: Optional[dict] = None) -> str:
     """
     Generic DOCX writer for journals without a dedicated builder.
 
@@ -685,12 +962,14 @@ def write_formatted_docx(instructions: dict, output_path: str) -> str:
             elif section_type == "reference":
                 ref_rules = rules.get("references", {})
                 _add_reference(doc, content, ref_rules, font_name, font_size)
-            elif section_type == "figure_caption":
+            elif section_type in ("figure_caption", "figure_block"):
                 fig_rules = rules.get("figures", {})
+                _render_figure_image(doc, section, image_store, font_name, font_size)
                 _add_figure_caption(doc, content, fig_rules, font_name, font_size)
-            elif section_type == "table_caption":
+            elif section_type in ("table_caption", "table_block"):
                 tbl_rules = rules.get("tables", {})
                 _add_table_caption(doc, content, tbl_rules, font_name, font_size)
+                _render_table_data(doc, section, table_store, font_name, font_size)
             else:
                 _add_paragraph(doc, content, font_name, font_size, line_spacing, doc_alignment)
         except Exception as e:
@@ -781,9 +1060,9 @@ def _apply_line_spacing(pf, line_spacing: float) -> None:
         pf.line_spacing_rule = WD_LINE_SPACING.SINGLE
     elif line_spacing == 1.5:
         pf.line_spacing_rule = WD_LINE_SPACING.ONE_POINT_FIVE
-    elif line_spacing == 2.0:
-        pf.line_spacing_rule = WD_LINE_SPACING.DOUBLE
     else:
+        # Use MULTIPLE for all other values including 2.0
+        # MULTIPLE scales with font size (correct for APA double-spacing)
         pf.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
         pf.line_spacing = line_spacing
 

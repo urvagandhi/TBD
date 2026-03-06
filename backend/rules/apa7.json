@@ -38,7 +38,8 @@
       "underline": false,
       "case": "Title Case",
       "numbering": "none",
-      "font_size": 12
+      "font_size": 12,
+      "apa_ref": "SS2.27"
     },
     "H2": {
       "bold": true,
@@ -47,7 +48,8 @@
       "underline": false,
       "case": "Title Case",
       "numbering": "none",
-      "font_size": 12
+      "font_size": 12,
+      "apa_ref": "SS2.27"
     },
     "H3": {
       "bold": true,
@@ -55,10 +57,39 @@
       "centered": false,
       "underline": false,
       "indent": true,
+      "indent_size": "0.5in",
       "case": "Title Case",
       "numbering": "none",
       "inline_with_text": true,
-      "font_size": 12
+      "period_after_heading": true,
+      "font_size": 12,
+      "apa_ref": "SS2.27"
+    },
+    "H4": {
+      "bold": true,
+      "italic": false,
+      "centered": false,
+      "indent": true,
+      "indent_size": "0.5in",
+      "inline_with_text": true,
+      "ends_with_period": true,
+      "case": "Title Case",
+      "numbering": "none",
+      "font_size": 12,
+      "apa_ref": "SS2.27"
+    },
+    "H5": {
+      "bold": true,
+      "italic": true,
+      "centered": false,
+      "indent": true,
+      "indent_size": "0.5in",
+      "inline_with_text": true,
+      "ends_with_period": true,
+      "case": "Title Case",
+      "numbering": "none",
+      "font_size": 12,
+      "apa_ref": "SS2.27"
     }
   },
   "citations": {
@@ -67,6 +98,16 @@
     "format_one_author": "(Smith, 2020)",
     "format_two_authors": "(Smith & Jones, 2020)",
     "format_three_plus": "(Smith et al., 2020)",
+    "narrative_one": "Smith (2020)",
+    "narrative_two": "Smith and Jones (2020)",
+    "narrative_three_plus": "Smith et al. (2020)",
+    "same_author_same_year": "(Smith, 2020a, 2020b)",
+    "multiple_sources": "(Jones, 2018; Smith, 2020)",
+    "multiple_sort_order": "alphabetical by first author surname",
+    "no_date": "(Smith, n.d.)",
+    "in_press": "(Smith, in press)",
+    "page_number_quote": "(Smith, 2020, p. 45)",
+    "page_range_quote": "(Smith, 2020, pp. 45-47)",
     "format_numbered": null,
     "include_page_for_quotes": true,
     "page_format": "p. 45"
@@ -81,10 +122,12 @@
     "indent_size": "0.5in",
     "line_spacing": 2.0,
     "space_between_entries": false,
+    "max_authors_before_et_al": 20,
     "formats": {
       "journal_article": "Author, A. A., & Author, B. B. (Year). Title of article. Journal Name, Volume(Issue), Page–Page. https://doi.org/xxxxx",
       "book": "Author, A. A. (Year). Title of work: Capital letter also for subtitle. Publisher.",
       "book_chapter": "Author, A. A., & Author, B. B. (Year). Title of chapter. In E. E. Editor (Ed.), Title of book (pp. page–page). Publisher.",
+      "book_chapter_multiple_editors": "Author, A. A. (Year). Title of chapter. In A. A. Editor & B. B. Editor (Eds.), Title of book (pp. page–page). Publisher.",
       "website": "Author, A. A. (Year, Month Day). Title of page. Site Name. URL",
       "conference_paper": "Author, A. A. (Year, Month). Title of paper [Paper presentation]. Conference Name, Location."
     }
@@ -113,6 +156,30 @@
   "equations": {
     "numbering": "right_aligned",
     "numbering_format": "(1)"
+  },
+  "block_quotes": {
+    "threshold_words": 40,
+    "left_indent": "0.5in",
+    "no_quotation_marks": true,
+    "apa_ref": "SS8.27"
+  },
+  "appendices": {
+    "label_format": "Appendix A",
+    "label_centered": true,
+    "label_bold": true,
+    "title_centered": true,
+    "title_bold": true,
+    "apa_ref": "SS2.14"
+  },
+  "footnotes": {
+    "position": "bottom_of_page",
+    "font_size": 10,
+    "line_spacing": 1.0,
+    "apa_ref": "SS2.12"
+  },
+  "statistical_notation": {
+    "italic_symbols": ["M", "SD", "SE", "p", "F", "t", "r", "n", "N"],
+    "apa_ref": "SS6.43"
   },
   "general_rules": {
     "doi_format": "https://doi.org/xxxxx",

@@ -27,6 +27,13 @@ STRUCTURAL_LABELS = [
     "[HEADING_H1:<text>]",
     "[HEADING_H2:<text>]",
     "[HEADING_H3:<text>]",
+    "[HEADING_H4:<text>]",
+    "[HEADING_H5:<text>]",
+    "[PARA_START]", "[PARA_END]",
+    "[BLOCK_QUOTE_START]", "[BLOCK_QUOTE_END]",
+    "[FOOTNOTE_START:<N>]", "[FOOTNOTE_END:<N>]",
+    "[APPENDIX_START:<A>]", "[APPENDIX_END:<A>]",
+    "[APPENDIX_TITLE_START]", "[APPENDIX_TITLE_END]",
     "[FIGURE_CAPTION_START:<N>]", "[FIGURE_CAPTION_END:<N>]",
     "[TABLE_CAPTION_START:<N>]", "[TABLE_CAPTION_END:<N>]",
     "[REFERENCE_START]", "[REFERENCE_END]",
@@ -43,8 +50,13 @@ _LABEL_PATTERN = re.compile(
     r"\[(?:TITLE_START|TITLE_END|AUTHORS_START|AUTHORS_END"
     r"|ABSTRACT_START|ABSTRACT_END|KEYWORDS_START|KEYWORDS_END"
     r"|SIGNIFICANCE_START|SIGNIFICANCE_END"
-    r"|HEADING_H[123]:[^\]]+|FIGURE_CAPTION_(?:START|END):[^\]]+"
+    r"|HEADING_H[12345]:[^\]]+|FIGURE_CAPTION_(?:START|END):[^\]]+"
     r"|TABLE_CAPTION_(?:START|END):[^\]]+"
+    r"|PARA_START|PARA_END"
+    r"|BLOCK_QUOTE_START|BLOCK_QUOTE_END"
+    r"|FOOTNOTE_(?:START|END):[^\]]+"
+    r"|APPENDIX_(?:START|END):[^\]]+"
+    r"|APPENDIX_TITLE_START|APPENDIX_TITLE_END"
     r"|REFERENCE_START|REFERENCE_END|CITATION:[^\]]+"
     r"|METADATA_START|METADATA_END"
     r"|ACKNOWLEDGMENTS_START|ACKNOWLEDGMENTS_END"
@@ -111,6 +123,29 @@ You must identify and label ALL of the following elements using these exact mark
 [HEADING_H3:Exact Heading Text]
   - Sub-subsection headings (rare). Usually run-in with the paragraph text.
 
+[HEADING_H4:Exact Heading Text]
+  - Level 4 sub-sub-subsection headings (very rare). Bold, indented, inline with text.
+
+[HEADING_H5:Exact Heading Text]
+  - Level 5 headings (very rare). Bold italic, indented, inline with text.
+
+[PARA_START]...[PARA_END]
+  - Wrap each body paragraph with these labels.
+  - This allows downstream agents to preserve paragraph boundaries in multi-paragraph sections.
+
+[BLOCK_QUOTE_START]...[BLOCK_QUOTE_END]
+  - Long quotations (40+ words) that are set apart from the text.
+  - These get different indentation treatment in APA format.
+
+[FOOTNOTE_START:N]...[FOOTNOTE_END:N]
+  - Footnote text. N = footnote number.
+  - May appear at bottom of pages or end of paper.
+
+[APPENDIX_START:A]...[APPENDIX_END:A]
+  - Appendix sections. A = appendix letter (A, B, C...).
+  - Include the appendix title within:
+  [APPENDIX_TITLE_START]Appendix Title[APPENDIX_TITLE_END]
+
 [FIGURE_CAPTION_START:N]...[FIGURE_CAPTION_END:N]
   - Figure caption text. N = figure number (1, 2, 3...).
   - Starts with "Fig. N." or "Figure N." in the source text.
@@ -149,12 +184,24 @@ You must identify and label ALL of the following elements using these exact mark
    [SOURCE_FORMAT:NLM] or [SOURCE_FORMAT:APA] or [SOURCE_FORMAT:other]
 6. Papers from PNAS, Nature, Science, Cell use NLM/Vancouver numbered style — this is NOT APA and must be converted.
 
+## CITATION RANGE PRESERVATION RULE
+
+For citation ranges like (9-12), preserve the range format EXACTLY as-is in the [CITATION:] label.
+Do NOT expand them. Example: [CITATION:(9-12)]
+The TRANSFORM agent will expand ranges using the reference list.
+
 ## PARAGRAPH MERGING RULE
 
 If the input has hard line breaks in the middle of sentences (common from PDF extraction):
 - Lines ending without period AND next line starts lowercase → these are ONE paragraph
 - Merge them into a single continuous paragraph between labels
 - Hyphenated line breaks like "entero-\\nhemorrhagic" → merge to "enterohemorrhagic"
+
+A new paragraph starts when:
+  (a) there is a blank line in the extracted text, OR
+  (b) the next line begins with 4+ spaces of indentation, OR
+  (c) the next line begins a new sentence after a heading.
+A line break within a sentence is a PDF wrapping artifact — merge it.
 
 ## OUTPUT FORMAT
 

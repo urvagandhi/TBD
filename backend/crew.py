@@ -24,6 +24,7 @@ from tools.compliance_checker import apply_deterministic_checks, run_determinist
 from tools.docx_reader import extract_docx_text
 from tools.docx_writer import build_apa_docx, build_ieee_docx, transform_docx_in_place, write_formatted_docx
 from tools.logger import get_logger
+from tools.media_extractor import extract_all_media, map_figures_to_images, map_tables_to_captions
 from tools.pre_format_scorer import score_pre_format
 from tools.rule_loader import load_rules
 from tools.tool_errors import (
@@ -778,7 +779,7 @@ def _validate_task_outputs(crew: Crew) -> str:
     return run_id
 
 
-def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optional[str] = None, rules_override: Optional[dict] = None, progress_callback=None) -> dict:
+def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optional[str] = None, rules_override: Optional[dict] = None, progress_callback=None, source_file_path: Optional[str] = None) -> dict:
     """
     Execute the 5-agent CrewAI sequential pipeline.
 
@@ -869,6 +870,23 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
         "[PIPELINE] Section-aware context built — %d sections detected: %s",
         len(section_stats), list(section_stats.keys()),
     )
+
+    # ── Media extraction — side-channel for images & tables (bypasses LLM) ──
+    # Determine source file path: prefer explicit param, fall back to source_docx_path
+    _media_source = source_file_path or source_docx_path
+    media_data: dict = {"source_type": "unknown", "raw_images": [], "raw_tables": []}
+    if _media_source and Path(_media_source).exists():
+        try:
+            media_data = extract_all_media(_media_source)
+            logger.info(
+                "[PIPELINE] Media extracted — %d images, %d tables from %s (%s)",
+                len(media_data["raw_images"]), len(media_data["raw_tables"]),
+                Path(_media_source).name, media_data["source_type"],
+            )
+        except Exception as _media_err:
+            logger.warning("[PIPELINE] Media extraction failed (non-fatal): %s", _media_err)
+    else:
+        logger.info("[PIPELINE] No source file for media extraction — figures/tables will use placeholders")
 
     from agents.transform_agent import detect_style
     style_key = detect_style(journal_style)  # "apa" | "ieee" | "generic"
@@ -1158,6 +1176,27 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
     overall_score = compliance_report.get("overall_score", "N/A")
     logger.info("[PIPELINE] Compliance report parsed — overall_score=%s", overall_score)
 
+    # ── Map extracted media to figure/table captions from PARSE output ─────────
+    image_store: dict = {}
+    table_store: dict = {}
+    try:
+        _parse_data = extract_json_from_llm(parse_raw)
+        figure_captions = _parse_data.get("figures", [])
+        table_captions = _parse_data.get("tables", [])
+        if media_data["raw_images"] or media_data["raw_tables"]:
+            image_store = map_figures_to_images(
+                media_data["raw_images"], figure_captions, media_data["source_type"],
+            )
+            table_store = map_tables_to_captions(
+                media_data["raw_tables"], table_captions, media_data["source_type"],
+            )
+            logger.info(
+                "[PIPELINE] Media mapped — %d figures, %d tables",
+                len(image_store), len(table_store),
+            )
+    except Exception as _map_err:
+        logger.warning("[PIPELINE] Media mapping failed (non-fatal): %s", _map_err)
+
     # ── Deterministic overrides — replace LLM scores with Python-computed facts ──
     try:
         paper_structure = extract_json_from_llm(parse_raw)
@@ -1210,7 +1249,10 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
     logger.info("[PIPELINE] Writing formatted DOCX (source_docx=%s)...",
                 "in-place" if source_docx_path else "from-text")
     t0 = time.time()
-    docx_filename = _write_docx_from_transform(transform_raw, rules, source_docx_path, paper_content, style_key, run_id=run_id)
+    docx_filename = _write_docx_from_transform(
+        transform_raw, rules, source_docx_path, paper_content, style_key,
+        run_id=run_id, image_store=image_store, table_store=table_store,
+    )
     logger.info("[PIPELINE] DOCX written — file=%s in %.2fs", docx_filename, time.time() - t0)
 
     total_elapsed = round(time.time() - pipeline_start, 1)
@@ -1524,6 +1566,8 @@ def _write_docx_from_transform(
     paper_content: Optional[str] = None,
     style_key: str = "generic",
     run_id: Optional[str] = None,
+    image_store: Optional[dict] = None,
+    table_store: Optional[dict] = None,
 ) -> str:
     """
     Extract transform output and write the formatted DOCX file.
@@ -1568,7 +1612,7 @@ def _write_docx_from_transform(
             )
         logger.info("[DOCX] APA format — using build_apa_docx — %d sections → %s",
                     len(sections), output_filename)
-        build_apa_docx(transform_data, output_path)
+        build_apa_docx(transform_data, output_path, image_store=image_store, table_store=table_store)
         return output_filename
 
     # ── Path B: IEEE → build_ieee_docx (flat sections, 2-column, 10pt) ──
@@ -1591,7 +1635,7 @@ def _write_docx_from_transform(
         docx_instructions["rules"] = rules
         logger.info("[DOCX] IEEE format — using build_ieee_docx — %d sections → %s",
                     len(docx_instructions["sections"]), output_filename)
-        build_ieee_docx(docx_instructions, output_path)
+        build_ieee_docx(docx_instructions, output_path, image_store=image_store, table_store=table_store)
         return output_filename
 
     # ── Path C: DOCX source with in-place transformation (preserves figures/tables) ──
@@ -1622,5 +1666,5 @@ def _write_docx_from_transform(
     docx_instructions["rules"] = rules
     logger.info("[DOCX] Generic format — using write_formatted_docx — %d sections → %s",
                 len(docx_instructions["sections"]), output_filename)
-    write_formatted_docx(docx_instructions, output_path)
+    write_formatted_docx(docx_instructions, output_path, image_store=image_store, table_store=table_store)
     return output_filename

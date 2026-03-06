@@ -134,6 +134,7 @@ export default function ProgressScreen({ jobId, journal, filename, onComplete, o
   const [elapsed, setElapsed] = useState(0)
   const [completed, setCompleted] = useState(false)
   const pollRef = useRef(null)
+  const failCountRef = useRef(0)
   const startRef = useRef(Date.now())
 
   // Elapsed timer
@@ -154,6 +155,7 @@ export default function ProgressScreen({ jobId, journal, filename, onComplete, o
     try {
       const res = await axios.get(`${API}/format/status/${jobId}`)
       const data = res.data
+      failCountRef.current = 0  // reset on success
 
       setProgress(data.progress || 0)
       setStepIndex(data.step_index ?? 0)
@@ -183,8 +185,13 @@ export default function ProgressScreen({ jobId, journal, filename, onComplete, o
         onError(data.error || 'Pipeline failed.')
       }
     } catch (err) {
-      // Network error — don't stop polling, it might recover
-      console.warn('Poll error:', err.message)
+      failCountRef.current += 1
+      console.warn(`Poll error (${failCountRef.current}):`, err.message)
+      // Stop polling after 10 consecutive failures (stale job or server down)
+      if (failCountRef.current >= 10) {
+        clearInterval(pollRef.current)
+        onError('Lost connection to server. Please try again.')
+      }
     }
   }, [jobId, onComplete, onError])
 

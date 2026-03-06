@@ -86,16 +86,24 @@ def _safe_context(context: dict, key: str) -> Any:
 # STYLE DETECTION — modular routing for journal-specific prompts
 # ═══════════════════════════════════════════════════════════════════════════════
 
+STYLE_ALIASES = {
+    "apa": ["apa", "american psychological", "7th edition", "author-date"],
+    "ieee": ["ieee", "institute of electrical"],
+    "generic": [],
+}
+
+
 def detect_style(journal_style: str) -> str:
     """Detect the style key from a journal style string.
 
     Returns: "apa" | "ieee" | "generic"
     """
-    s = journal_style.lower()
-    if "apa" in s:
-        return "apa"
-    if "ieee" in s:
-        return "ieee"
+    s = journal_style.lower().strip()
+    if not s:
+        return "generic"
+    for style, aliases in STYLE_ALIASES.items():
+        if any(alias in s for alias in aliases):
+            return style
     return "generic"
 
 
@@ -201,6 +209,16 @@ Narrative (author is part of sentence):
 
 Multiple sources: (Author1, 2020; Author2, 2019) — semicolon, alphabetical
 
+Same author, same year: add lowercase letter suffix.
+  Assign alphabetically by title: earliest title = a, next = b.
+  Apply same suffix in the References section.
+  Example: (Smith, 2020a) and (Smith, 2020b)
+
+No date: (Smith, n.d.) — use "n.d." when publication year is unavailable
+In press: (Smith, in press) — for accepted but unpublished works
+
+After expanding citation ranges (e.g. (9-12) → four citations), sort ALL citations in a multi-citation parenthetical ALPHABETICALLY by first author surname.
+
 ### F.3 — Output Format
 For EACH replacement, record:
   {"original": "(1)", "replacement": "(Nataro & Kaper, 1998)", "ref_id": "1"}
@@ -229,7 +247,11 @@ AUTHORS:
 
 YEAR: In parentheses after authors, followed by PERIOD: (1998).
 
-TITLE: Sentence case — only first word, proper nouns, first word after colon capitalized.
+TITLE: Sentence case for article/chapter titles:
+  - Capitalize ONLY: first word, first word after colon, proper nouns
+  - KEEP original capitalization for: gene names (e.g. EHEC), species names,
+    country names, disease names, chemical formulas, acronyms
+  - DO NOT capitalize: all other words
 
 JOURNAL: *Title Case*, *italicized*
 
@@ -240,6 +262,17 @@ ISSUE: (in parentheses), NOT italicized, immediately after volume with no space
 PAGES: en-dash (–) not hyphen (-). Comma before pages.
 
 DOI: https://doi.org/xxxxx — if available, at end, no period after URL.
+  DOIs may contain line-break artifacts from PDF extraction (e.g. 'https://doi.org/10.1073/\npnas.xxx').
+  Detect and merge broken DOIs into a single continuous URL.
+
+EDITORS (for book chapters):
+  Single editor:   In A. A. Editor (Ed.),
+  Multiple editors: In A. A. Editor & B. B. Editor (Eds.),
+  Three+ editors: In A. A. Editor et al. (Eds.),
+
+CITATION vs REFERENCE author rules:
+  CITATION rule: 3+ authors in text → first author + et al. every time
+  REFERENCE rule: ≤20 authors → list ALL. >20 authors → first 19, ..., last author
 
 ### G.3 — Reference List Rules
   • Heading: "References" — bold, centered, on new page

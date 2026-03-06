@@ -95,6 +95,7 @@ def _run_pipeline_job(
     source_docx_path: Optional[str] = None,
     overrides: Optional[str] = None,
     custom_rules: Optional[str] = None,
+    source_file_path: Optional[str] = None,
 ) -> None:
     """
     Background worker for async pipeline processing.
@@ -145,6 +146,7 @@ def _run_pipeline_job(
             source_docx_path=source_docx_path,
             rules_override=rules_override,
             progress_callback=_on_progress,
+            source_file_path=source_file_path,
         )
         compliance_report = result["compliance_report"]
         enriched_changes = result.get("changes_made", []) or compliance_report.get("changes_made", [])
@@ -837,6 +839,7 @@ async def format_document(
     paper_text = None
     ext = None
     source_docx_path = None
+    source_file_path = None  # For media extraction (images/tables) — works for both PDF and DOCX
     original_filename = None
 
     if doc_id:
@@ -845,9 +848,11 @@ async def format_document(
         paper_text = doc["text"]
         ext = doc["ext"]
         original_filename = doc.get("filename", "document")
-        # Provide source DOCX path for in-place transformation
-        if ext == "docx" and doc.get("upload_path") and Path(doc["upload_path"]).exists():
-            source_docx_path = doc["upload_path"]
+        # Provide source paths for in-place transformation and media extraction
+        if doc.get("upload_path") and Path(doc["upload_path"]).exists():
+            source_file_path = doc["upload_path"]
+            if ext == "docx":
+                source_docx_path = doc["upload_path"]
         logger.info("[FORMAT:%s] Using pre-uploaded doc_id=%s (%s)", job_id, doc_id, ext)
 
     elif file:
@@ -878,6 +883,7 @@ async def format_document(
         try:
             paper_text = _extract_text(str(upload_path), ext)
             _validate_text_quality(paper_text, job_id)
+            source_file_path = str(upload_path)  # For media extraction
             if ext == "docx":
                 source_docx_path = str(upload_path)
         except Exception:
@@ -957,6 +963,7 @@ async def format_document(
         source_docx_path=source_docx_path,
         overrides=overrides,
         custom_rules=custom_rules,
+        source_file_path=source_file_path,
     )
 
     return JSONResponse(

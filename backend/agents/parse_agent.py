@@ -102,12 +102,20 @@ Parse the labeled text and produce a JSON object with the following schema.
     {
       "heading": "Introduction",
       "level": 1,
-      "content": "Full section body text. Merge all paragraphs belonging to this section.",
+      "content": "Full section body text as a single string (for backward compatibility).",
+      "paragraphs": [
+        {"index": 1, "text": "First paragraph text.", "type": "body"},
+        {"index": 2, "text": "Second paragraph text.", "type": "body"},
+        {"index": 3, "text": "Long quoted passage...", "type": "block_quote"}
+      ],
       "subsections": [
         {
           "heading": "Subsection Title",
           "level": 2,
-          "content": "Subsection body text"
+          "content": "Subsection body text",
+          "paragraphs": [
+            {"index": 1, "text": "Paragraph text.", "type": "body"}
+          ]
         }
       ]
     }
@@ -129,6 +137,9 @@ Parse the labeled text and produce a JSON object with the following schema.
       "id": "1",
       "original_text": "(1)",
       "context": "5 words before and after the citation",
+      "section_heading": "Introduction",
+      "paragraph_index": 1,
+      "citation_type": "parenthetical",
       "in_text_format": "numbered"
     }
   ],
@@ -171,6 +182,10 @@ Parse the labeled text and produce a JSON object with the following schema.
 6. Map each citation in the text to its corresponding reference ID.
 7. The sections array must follow the paper's actual order.
 8. Merge partial paragraphs that were split by PDF extraction into complete paragraphs.
+9. When building sections[].content, strip all [CITATION:] labels but leave the original citation text in place. Example: 'colonized by [CITATION:(1)] trillions' → 'colonized by (1) trillions'. The citations array captures the mapping separately.
+10. For each section, split the content into separate paragraphs in the "paragraphs" array. Each paragraph boundary is indicated by a blank line, [PARA_START]/[PARA_END] labels, or indentation change in the source text. Also provide "content" as a flat string for backward compatibility.
+11. For each citation, record "citation_type": "parenthetical" or "narrative". Parenthetical = citation inside parentheses. Narrative = author name is part of the sentence with year in parentheses.
+12. Group/organizational authors: set parsed.authors[0].is_group=true, last='CDC'. No-date references: parsed.year='n.d.'. In-press references: parsed.year='in press'.
 
 ## OUTPUT
 

@@ -9,6 +9,10 @@ Checks implemented:
   1. Abstract Word Count   — exact (word count vs max_words)
   2. Citation Format Match — regex pattern match per journal format
   3. Reference Ordering    — alphabetical sort check (APA, Chicago, Springer)
+  4. Citation Consistency  — citation ↔ reference bi-directional check
+  5. DOI Format            — must use https://doi.org/xxxxx (APA §9.34)
+  6. et al. Period         — "et al." must have period (APA §8.17)
+  7. Ampersand Citations   — & in parenthetical citations (APA §8.17)
 """
 import re
 from dataclasses import dataclass, field
@@ -24,6 +28,9 @@ _CHECK_TO_SECTION = {
     "citation_format":       "citations",
     "citation_consistency":  "citations",
     "reference_ordering":    "references",
+    "doi_format":            "references",
+    "et_al_period":          "citations",
+    "ampersand_citations":   "citations",
 }
 
 # Citation format regex patterns — keyed by journal rules.citations.style value
@@ -82,6 +89,21 @@ def run_deterministic_checks(
         results += _check_citation_consistency(paper_structure, rules)
     except Exception as e:
         logger.warning("[CHECKER] citation_consistency failed: %s", e)
+
+    try:
+        results += _check_doi_format(paper_structure, rules)
+    except Exception as e:
+        logger.warning("[CHECKER] doi_format failed: %s", e)
+
+    try:
+        results += _check_et_al_period(paper_structure, rules)
+    except Exception as e:
+        logger.warning("[CHECKER] et_al_period failed: %s", e)
+
+    try:
+        results += _check_ampersand_citations(paper_structure, rules)
+    except Exception as e:
+        logger.warning("[CHECKER] ampersand_citations failed: %s", e)
 
     logger.info(
         "[CHECKER] %d deterministic checks run — passed=%d failed=%d",
@@ -413,6 +435,180 @@ def _check_citation_consistency(
     )]
 
 
+def _check_doi_format(
+    paper_structure: dict,
+    rules: dict,
+) -> list[DeterministicCheck]:
+    """
+    Check that DOIs in references use the correct format (https://doi.org/...).
+
+    Score: fraction of DOI-containing refs with correct format × 100.
+    """
+    expected_prefix = rules.get("general_rules", {}).get("doi_format", "https://doi.org/")
+    if "doi.org" not in expected_prefix:
+        return []
+
+    refs = paper_structure.get("references", [])
+    if isinstance(refs, dict):
+        refs = refs.get("list", [])
+
+    doi_refs = []
+    correct = 0
+    doi_pattern = re.compile(r"https?://doi\.org/\S+")
+    bad_doi_pattern = re.compile(r"\bdoi:\s*10\.\S+", re.IGNORECASE)
+
+    for ref in refs:
+        if not isinstance(ref, str):
+            continue
+        has_good_doi = bool(doi_pattern.search(ref))
+        has_bad_doi = bool(bad_doi_pattern.search(ref))
+        if has_good_doi or has_bad_doi:
+            doi_refs.append(ref)
+            if has_good_doi:
+                correct += 1
+
+    if not doi_refs:
+        return []
+
+    ratio = correct / len(doi_refs)
+    score = round(ratio * 100)
+    passed = ratio >= 0.90
+
+    detail = f"{correct}/{len(doi_refs)} references have correct DOI format (https://doi.org/...)."
+    issue = (
+        f"{len(doi_refs) - correct} references use incorrect DOI format. "
+        "DOIs must use https://doi.org/xxxxx format per APA §9.34."
+        if not passed else None
+    )
+
+    return [DeterministicCheck(
+        check_id="doi_format",
+        section="references",
+        check_name="DOI Format",
+        score=score,
+        passed=passed,
+        issue=issue,
+        detail=detail,
+        rule_reference="APA §9.34 — DOI format",
+    )]
+
+
+def _check_et_al_period(
+    paper_structure: dict,
+    rules: dict,
+) -> list[DeterministicCheck]:
+    """
+    Check that 'et al.' always has a period after 'al' in citations.
+
+    Common error: 'et al' without period. APA requires 'et al.'
+    """
+    # Gather all citation texts
+    all_citations: list[str] = []
+    for citation in paper_structure.get("citations", []):
+        if isinstance(citation, dict):
+            all_citations.append(citation.get("original_text", ""))
+        elif isinstance(citation, str):
+            all_citations.append(citation)
+
+    # Also check section content
+    for section in paper_structure.get("sections", []):
+        content = section.get("content", "")
+        if content:
+            all_citations.append(content)
+
+    if not all_citations:
+        return []
+
+    full_text = " ".join(all_citations)
+    # Count correct "et al." (with period)
+    correct_count = len(re.findall(r"\bet al\.", full_text))
+    # Count incorrect "et al" (without period, not followed by period)
+    incorrect_count = len(re.findall(r"\bet al(?!\.)\b", full_text))
+
+    total = correct_count + incorrect_count
+    if total == 0:
+        return []
+
+    passed = incorrect_count == 0
+    score = round((correct_count / total) * 100) if total > 0 else 100
+
+    detail = f"'et al.' usage: {correct_count} correct, {incorrect_count} missing period."
+    issue = (
+        f"{incorrect_count} instances of 'et al' missing the required period. "
+        "APA requires 'et al.' (with period) per §8.17."
+        if not passed else None
+    )
+
+    return [DeterministicCheck(
+        check_id="et_al_period",
+        section="citations",
+        check_name="et al. Period Check",
+        score=score,
+        passed=passed,
+        issue=issue,
+        detail=detail,
+        rule_reference="APA §8.17 — et al. format",
+    )]
+
+
+def _check_ampersand_citations(
+    paper_structure: dict,
+    rules: dict,
+) -> list[DeterministicCheck]:
+    """
+    Check that parenthetical citations use & (not 'and') for two-author citations.
+
+    APA rule: & in parenthetical, 'and' in narrative.
+    """
+    use_ampersand = rules.get("general_rules", {}).get("use_ampersand_in_citations", False)
+    if not use_ampersand:
+        return []
+
+    # Check for parenthetical citations with "and" instead of "&"
+    all_citations: list[str] = []
+    for citation in paper_structure.get("citations", []):
+        if isinstance(citation, dict):
+            text = citation.get("original_text", "")
+            ctype = citation.get("citation_type", "")
+            if ctype == "parenthetical" or (text.startswith("(") and text.endswith(")")):
+                all_citations.append(text)
+        elif isinstance(citation, str) and citation.startswith("(") and citation.endswith(")"):
+            all_citations.append(citation)
+
+    if not all_citations:
+        return []
+
+    # In parenthetical citations, "and" between authors should be "&"
+    wrong_count = 0
+    for cit in all_citations:
+        # Match pattern like "(Smith and Jones, 2020)" — should be "&"
+        if re.search(r"\b[A-Z][a-z]+\s+and\s+[A-Z][a-z]+", cit):
+            wrong_count += 1
+
+    total = len(all_citations)
+    correct = total - wrong_count
+    passed = wrong_count == 0
+    score = round((correct / total) * 100) if total > 0 else 100
+
+    detail = f"Parenthetical citations: {correct}/{total} correctly use & instead of 'and'."
+    issue = (
+        f"{wrong_count} parenthetical citations use 'and' instead of '&'. "
+        "APA requires & in parenthetical citations per §8.17."
+        if not passed else None
+    )
+
+    return [DeterministicCheck(
+        check_id="ampersand_citations",
+        section="citations",
+        check_name="Ampersand in Parenthetical Citations",
+        score=score,
+        passed=passed,
+        issue=issue,
+        detail=detail,
+        rule_reference="APA §8.17 — & in parenthetical citations",
+    )]
+
+
 def _issue_contradicts_passing_check(issue_text: str, check_id: str) -> bool:
     """
     Heuristic: detect if an LLM-generated issue text is about a topic
@@ -424,6 +620,9 @@ def _issue_contradicts_passing_check(issue_text: str, check_id: str) -> bool:
         "reference_ordering":   ["alphabetical", "reference order", "sorted"],
         "citation_format":      ["citation format", "author-date", "numbered citation"],
         "citation_consistency": ["orphan", "uncited", "no matching reference", "consistency"],
+        "doi_format":           ["doi", "doi format", "https://doi.org"],
+        "et_al_period":         ["et al", "period after al"],
+        "ampersand_citations":  ["ampersand", "& in citation", "and vs &"],
     }
     keywords = _KEYWORDS.get(check_id, [])
     lower = issue_text.lower()

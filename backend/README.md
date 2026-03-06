@@ -91,7 +91,7 @@ Before the pipeline runs, `_build_structured_paper()` uses `text_chunker.split_i
 [REFERENCE_ENTRY] Smith, J. et al. (2021). ...
 ```
 
-**Supported labels**: `TITLE`, `ABSTRACT`, `KEYWORD`, `HEADING_H1`, `HEADING_H2`, `HEADING_H3`, `BODY_PARAGRAPH`, `IN_TEXT_CITATION`, `FIGURE_CAPTION`, `TABLE_CAPTION`, `REFERENCE_ENTRY`
+**Supported labels**: `TITLE`, `ABSTRACT`, `KEYWORD`, `HEADING_H1`-`H5`, `BODY_PARAGRAPH`, `PARA_START/END`, `BLOCK_QUOTE_START/END`, `FOOTNOTE_START/END`, `APPENDIX_START/END`, `IN_TEXT_CITATION`, `FIGURE_CAPTION`, `TABLE_CAPTION`, `REFERENCE_ENTRY`
 
 ---
 
@@ -175,14 +175,23 @@ Applies `_sort_sections_by_canonical_order()` (IMRAD ordering: Introduction → 
 
 **Goal**: Run 7 mandatory compliance checks and produce a `compliance_report` with per-section scores 0-100.
 
-**7 Checks**:
-1. Citation-to-reference 1:1 consistency (orphan citations, uncited references)
-2. IMRAD structure completeness
-3. Reference age (>50% older than 10 years → warning)
-4. Self-citation rate (>30% same author → warning)
-5. Figure sequential numbering (no gaps)
-6. Table sequential numbering (no gaps)
-7. Abstract word count vs journal limit
+**7 LLM Compliance Checks** (weighted):
+1. Citations (22%): author-date format, & vs "and", et al. usage
+2. References (22%): APA format, alphabetical order, hanging indent
+3. Document Format (18%): font, spacing, margins, alignment
+4. Headings (13%): H1-H5 styles, IMRAD presence, no "Introduction" heading
+5. Abstract (12%): word count, label style, keywords
+6. Figures (6.5%): label format, caption position, sequential numbering
+7. Tables (6.5%): label format, caption position, sequential numbering
+
+**7 Deterministic Checks** (Python-exact, override LLM scores):
+1. Abstract word count — exact count vs max_words
+2. Citation format match — regex pattern match
+3. Reference ordering — alphabetical sort check
+4. Citation ↔ reference consistency — bi-directional check
+5. DOI format — must use https://doi.org/xxxxx (APA §9.34)
+6. et al. period — must be "et al." with period (APA §8.17)
+7. Ampersand in parenthetical citations — & not "and" (APA §8.17)
 
 **Scoring**: Weighted formula across 7 sections. `_clamp_score()` enforces [0, 100] bounds. `_recompute_overall_score()` cross-checks the weighted formula for consistency. Score >= 80 sets `submission_ready: true`.
 
@@ -249,7 +258,8 @@ backend/
 │   ├── docx_writer.py           # write_formatted_docx() + transform_docx_in_place()
 │   ├── rule_loader.py           # load_rules(journal), JOURNAL_MAP, get_supported_journals()
 │   ├── text_chunker.py          # split_into_sections() → IMRAD sections + word counts
-│   ├── compliance_checker.py    # run_deterministic_checks() + apply_deterministic_checks()
+│   ├── compliance_checker.py    # 7 deterministic checks (override LLM scores)
+│   ├── media_extractor.py       # Side-channel image/table extraction (PDF/DOCX)
 │   ├── rule_extractor.py        # extract_journal_rules_from_url() (BeautifulSoup)
 │   ├── logger.py                # get_logger(name) → logging.Logger (structured format)
 │   └── tool_errors.py           # ToolError, ParseError, LLMResponseError, TransformError,
@@ -291,6 +301,7 @@ backend/
 | Google Gemini | 2.5-flash | LLM powering all 5 agents |
 | PyMuPDF (fitz) | 1.24.0 | PDF text extraction |
 | python-docx | 1.1.0 | DOCX read and write |
+| pdfplumber | >=0.10.0 | PDF table extraction |
 | python-dotenv | >=1.0.0 | Environment variable loading |
 | jsonschema | >=4.0.0 | JSON validation |
 | python-multipart | 0.0.9 | Multipart file upload parsing |
@@ -599,43 +610,25 @@ A global `@app.exception_handler(Exception)` catches any unhandled exceptions an
 
 ## Journal Rules Schema
 
-Each `rules/*.json` file follows this structure:
+Each `rules/*.json` file follows this structure (15 categories for APA):
 
 ```json
 {
-  "document": {
-    "font_family": "Times New Roman",
-    "font_size_pt": 12,
-    "line_spacing": 2.0,
-    "margin_inches": 1.0,
-    "page_numbers": true
-  },
-  "abstract": {
-    "max_words": 250,
-    "structured": false
-  },
-  "headings": {
-    "levels": 3,
-    "style": "Title Case",
-    "numbered": false
-  },
-  "citations": {
-    "style": "APA",
-    "format": "Author, Year"
-  },
-  "references": {
-    "style": "APA 7th",
-    "doi_required": true,
-    "hanging_indent": true
-  },
-  "figures": {
-    "caption_position": "below",
-    "label_format": "Figure N."
-  },
-  "tables": {
-    "caption_position": "above",
-    "label_format": "Table N."
-  }
+  "style_name": "APA 7th Edition",
+  "document": { "font", "font_size", "line_spacing", "margins", "alignment", "columns" },
+  "title_page": { "title_case", "title_bold", "title_centered", "title_font_size" },
+  "abstract": { "label", "max_words", "keywords_present", "keywords_italic" },
+  "headings": { "H1"-"H5" with bold, italic, centered, indent, inline_with_text, case },
+  "citations": { "style", "format_one_author"-"format_three_plus", "narrative_*", "same_author_same_year", "no_date", "in_press" },
+  "references": { "ordering", "hanging_indent", "max_authors_before_et_al", "formats" },
+  "figures": { "label_prefix", "caption_position", "numbering" },
+  "tables": { "label_prefix", "caption_position", "border_style", "numbering" },
+  "equations": { "numbering", "numbering_format" },
+  "block_quotes": { "threshold_words", "left_indent", "no_quotation_marks" },
+  "appendices": { "label_format", "label_centered", "label_bold" },
+  "footnotes": { "position", "font_size", "line_spacing" },
+  "statistical_notation": { "italic_symbols": ["M", "SD", "SE", "p", "F", "t", "r", "n", "N"] },
+  "general_rules": { "doi_format", "et_al_threshold", "use_ampersand_in_citations", "oxford_comma" }
 }
 ```
 
