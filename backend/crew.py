@@ -713,21 +713,24 @@ class _StepTimer:
         self._step_start = time.time()
 
 
-def _validate_task_outputs(crew: Crew) -> None:
+def _validate_task_outputs(crew: Crew) -> str:
     """
     Central pipeline guard — validate all task outputs after crew.kickoff().
 
     For JSON steps (parse, transform, validate), uses extract_json_from_llm()
     to properly strip chain-of-thought preamble before checking required keys.
     Raises TransformError immediately on any failure.
+
+    Returns:
+        run_id (str): Unique 6-char hex identifier for this pipeline run.
     """
     import uuid
     from pathlib import Path
 
-    # Save intermediate outputs to outputs/ folder for debugging
+    # Save intermediate outputs to a per-run subfolder for clean organization
     run_id = uuid.uuid4().hex[:6]
-    outputs_dir = Path(__file__).parent / "outputs"
-    outputs_dir.mkdir(exist_ok=True)
+    run_dir = Path(__file__).parent / "outputs" / f"run_{run_id}"
+    run_dir.mkdir(parents=True, exist_ok=True)
 
     # Step 0: ingest — just needs non-empty text output
     # Steps 1-3: need valid JSON with specific keys
@@ -741,7 +744,7 @@ def _validate_task_outputs(crew: Crew) -> None:
         name = ["ingest", "parse", "transform", "validate"][idx]
         try:
             raw = _get_task_output(crew, idx)
-            debug_path = outputs_dir / f"intermediate_{run_id}_{idx+1}_{name}.txt"
+            debug_path = run_dir / f"{idx+1}_{name}.txt"
             with open(debug_path, "w", encoding="utf-8") as f:
                 f.write(raw)
         except TransformError as e:
@@ -771,6 +774,8 @@ def _validate_task_outputs(crew: Crew) -> None:
                 )
 
         logger.debug("[PIPELINE] Task '%s' output validated OK (%d chars)", name, len(raw))
+
+    return run_id
 
 
 def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optional[str] = None, rules_override: Optional[dict] = None, progress_callback=None) -> dict:
@@ -1120,7 +1125,7 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
 
             # Validate all task outputs before proceeding
             logger.info("[PIPELINE] Validating task outputs...")
-            _validate_task_outputs(crew)
+            run_id = _validate_task_outputs(crew)
             
             # Additional validation for transform output specifically
             transform_raw = _get_task_output(crew, task_index=2)
@@ -1205,7 +1210,7 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
     logger.info("[PIPELINE] Writing formatted DOCX (source_docx=%s)...",
                 "in-place" if source_docx_path else "from-text")
     t0 = time.time()
-    docx_filename = _write_docx_from_transform(transform_raw, rules, source_docx_path, paper_content, style_key)
+    docx_filename = _write_docx_from_transform(transform_raw, rules, source_docx_path, paper_content, style_key, run_id=run_id)
     logger.info("[PIPELINE] DOCX written — file=%s in %.2fs", docx_filename, time.time() - t0)
 
     total_elapsed = round(time.time() - pipeline_start, 1)
@@ -1518,6 +1523,7 @@ def _write_docx_from_transform(
     source_docx_path: Optional[str] = None,
     paper_content: Optional[str] = None,
     style_key: str = "generic",
+    run_id: Optional[str] = None,
 ) -> str:
     """
     Extract transform output and write the formatted DOCX file.
@@ -1540,8 +1546,16 @@ def _write_docx_from_transform(
         )
 
     docx_instructions = transform_data["docx_instructions"]
-    output_filename = f"formatted_{uuid.uuid4().hex[:8]}.docx"
-    output_path = str(OUTPUT_DIR / output_filename)
+    docx_basename = f"formatted_{run_id or uuid.uuid4().hex[:8]}.docx"
+    if run_id:
+        run_dir = OUTPUT_DIR / f"run_{run_id}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        output_path = str(run_dir / docx_basename)
+        # Return path relative to OUTPUT_DIR so download/preview endpoints can find it
+        output_filename = f"run_{run_id}/{docx_basename}"
+    else:
+        output_path = str(OUTPUT_DIR / docx_basename)
+        output_filename = docx_basename
 
     sections = docx_instructions.get("sections") if isinstance(docx_instructions, dict) else None
 

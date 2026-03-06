@@ -185,9 +185,19 @@ def _run_pipeline_job(
 # Cleanup helpers
 # ---------------------------------------------------------------------------
 def _cleanup_old_outputs(hours: int = 6) -> None:
-    """Delete DOCX files in outputs/ older than `hours` hours."""
+    """Delete old run folders and loose DOCX files in outputs/ older than `hours` hours."""
+    import shutil
     cutoff = time.time() - hours * 3600
     removed = 0
+    # Clean run_* subfolders
+    for d in OUTPUTS_DIR.glob("run_*"):
+        try:
+            if d.is_dir() and d.stat().st_mtime < cutoff:
+                shutil.rmtree(d)
+                removed += 1
+        except Exception:
+            pass
+    # Clean any loose DOCX files (legacy)
     for f in OUTPUTS_DIR.glob("*.docx"):
         try:
             if f.stat().st_mtime < cutoff:
@@ -195,8 +205,16 @@ def _cleanup_old_outputs(hours: int = 6) -> None:
                 removed += 1
         except Exception:
             pass
+    # Clean legacy intermediate_* files
+    for f in OUTPUTS_DIR.glob("intermediate_*.txt"):
+        try:
+            if f.stat().st_mtime < cutoff:
+                f.unlink(missing_ok=True)
+                removed += 1
+        except Exception:
+            pass
     if removed:
-        logger.info("[CLEANUP] Removed %d stale output file(s) older than %dh", removed, hours)
+        logger.info("[CLEANUP] Removed %d stale output(s) older than %dh", removed, hours)
 
 
 def _cleanup_expired_docs() -> None:
@@ -1109,20 +1127,21 @@ def _convert_docx_to_pdf(docx_path: Path) -> Path:
         raise RuntimeError("PDF conversion timed out.")
 
 
-@app.get("/download/{filename}")
-async def download_file(filename: str, format: str = "docx") -> FileResponse:
+@app.get("/download/{filepath:path}")
+async def download_file(filepath: str, format: str = "docx") -> FileResponse:
     """Download the formatted file as DOCX or PDF."""
-    if not re.match(r"^[a-zA-Z0-9_\-\.]+$", filename):
+    # filepath can be "formatted_xxx.docx" or "run_xxx/formatted_xxx.docx"
+    if not re.match(r"^[a-zA-Z0-9_\-\./]+$", filepath):
         raise HTTPException(status_code=400, detail={
             "success": False, "error": "Invalid filename format.",
         })
 
-    if not filename.endswith(".docx"):
+    if not filepath.endswith(".docx"):
         raise HTTPException(status_code=400, detail={
             "success": False, "error": "Only .docx files can be downloaded.",
         })
 
-    file_path = (OUTPUTS_DIR / filename).resolve()
+    file_path = (OUTPUTS_DIR / filepath).resolve()
     if not str(file_path).startswith(str(OUTPUTS_DIR.resolve())):
         raise HTTPException(status_code=403, detail={
             "success": False, "error": "Access denied.",
@@ -1131,13 +1150,16 @@ async def download_file(filename: str, format: str = "docx") -> FileResponse:
     if not file_path.exists():
         raise HTTPException(status_code=404, detail={
             "success": False,
-            "error": f"File '{filename}' not found or has already been deleted.",
+            "error": f"File '{filepath}' not found or has already been deleted.",
         })
+
+    # Use just the basename for Content-Disposition headers
+    dl_name = Path(filepath).name
 
     if format == "pdf":
         try:
             pdf_path = _convert_docx_to_pdf(file_path)
-            pdf_name = filename.replace(".docx", ".pdf")
+            pdf_name = dl_name.replace(".docx", ".pdf")
             return FileResponse(
                 path=str(pdf_path),
                 filename=pdf_name,
@@ -1151,25 +1173,25 @@ async def download_file(filename: str, format: str = "docx") -> FileResponse:
 
     return FileResponse(
         path=str(file_path),
-        filename=filename,
+        filename=dl_name,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="{dl_name}"'},
     )
 
 
 # ---------------------------------------------------------------------------
 # GET /preview/{filename} — Live HTML preview of formatted DOCX
 # ---------------------------------------------------------------------------
-@app.get("/preview/{filename}")
-async def preview_file(filename: str) -> HTMLResponse:
+@app.get("/preview/{filepath:path}")
+async def preview_file(filepath: str) -> HTMLResponse:
     """Convert DOCX to HTML for live iframe preview."""
-    if not re.match(r"^[a-zA-Z0-9_\-\.]+$", filename):
+    if not re.match(r"^[a-zA-Z0-9_\-\./]+$", filepath):
         raise HTTPException(status_code=400, detail="Invalid filename format.")
 
-    if not filename.endswith(".docx"):
+    if not filepath.endswith(".docx"):
         raise HTTPException(status_code=400, detail="Only .docx files can be previewed.")
 
-    file_path = (OUTPUTS_DIR / filename).resolve()
+    file_path = (OUTPUTS_DIR / filepath).resolve()
     if not str(file_path).startswith(str(OUTPUTS_DIR.resolve())):
         raise HTTPException(status_code=403, detail="Access denied.")
 
@@ -1178,9 +1200,49 @@ async def preview_file(filename: str) -> HTMLResponse:
 
     try:
         import mammoth
+        from docx import Document as DocxDocument
+
+        # Detect column count from DOCX section properties
+        num_columns = 1
+        try:
+            doc = DocxDocument(str(file_path))
+            sect = doc.sections[0]
+            cols_list = sect._sectPr.xpath('./w:cols')
+            if cols_list:
+                col_num = cols_list[0].get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}num')
+                if col_num and int(col_num) > 1:
+                    num_columns = int(col_num)
+        except Exception:
+            pass
+
         with open(file_path, "rb") as f:
             result = mammoth.convert_to_html(f)
         html_body = result.value
+
+        # Column CSS: apply multi-column layout for IEEE-style 2-column papers
+        if num_columns >= 2:
+            col_css = f"""
+  .page-body {{
+    column-count: {num_columns};
+    column-gap: 24px;
+    column-rule: 1px solid #e0e0e0;
+  }}
+  .page-body h1, .page-body h2 {{
+    column-span: all;
+  }}
+  .page-body p, .page-body li {{
+    text-align: justify;
+    orphans: 3;
+    widows: 3;
+  }}
+  .page {{
+    max-width: 900px;
+    padding: 54px 54px 60px;
+    font-size: 10pt;
+    line-height: 1.15;
+  }}"""
+        else:
+            col_css = ""
 
         # Wrap in a styled document for iframe display — paper-like appearance
         html_page = f"""<!DOCTYPE html>
@@ -1247,11 +1309,14 @@ async def preview_file(filename: str) -> HTMLResponse:
   ::-webkit-scrollbar-track {{ background: #e8e8e8; }}
   ::-webkit-scrollbar-thumb {{ background: #bbb; border-radius: 4px; }}
   ::-webkit-scrollbar-thumb:hover {{ background: #999; }}
+  {col_css}
 </style>
 </head>
 <body>
 <div class="page">
+<div class="page-body">
 {html_body}
+</div>
 </div>
 </body>
 </html>"""
@@ -1260,7 +1325,7 @@ async def preview_file(filename: str) -> HTMLResponse:
     except ImportError:
         raise HTTPException(status_code=500, detail="mammoth not installed for DOCX→HTML preview.")
     except Exception as e:
-        logger.exception("[PREVIEW] Error converting %s: %s", filename, e)
+        logger.exception("[PREVIEW] Error converting %s: %s", filepath, e)
         raise HTTPException(status_code=500, detail=f"Preview generation failed: {str(e)[:200]}")
 
 
