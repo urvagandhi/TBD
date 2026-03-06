@@ -1068,7 +1068,7 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
         agents=[ingest_agent, parse_agent, transform_agent, validate_agent],
         tasks=[ingest_task, parse_task, transform_task, validate_task],
         process=Process.sequential,
-        verbose=False,
+        verbose=True,
         task_callback=step_timer.on_task_complete,
     )
 
