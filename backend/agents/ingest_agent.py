@@ -138,8 +138,7 @@ def create_ingest_agent(llm: Any) -> Agent:
             "  6. [HEADING_H3] for: numbered sub-subsections (1.1.1) only\n"
             "  7. [CITATION] inline within paragraph text — keep citation inline, "
             "     add [CITATION:text] immediately before the citation marker\n"
-            "  8. If paper_content exceeds 50,000 chars: process first 40,000 chars + "
-            "     last 5,000 chars, insert [TRUNCATED] marker between them\n"
+            "  8. Process the entire paper_content regardless of length\n"
             "  9. Non-English papers: attempt labelling using section names in that language\n"
             " 10. Return ONLY the labelled text — no JSON, no explanation, no commentary\n\n"
             "TOKEN SAFETY: If input is very large, focus on Title, Authors, Abstract, "
@@ -161,8 +160,8 @@ def create_ingest_agent(llm: Any) -> Agent:
             "markers that guide the downstream Parse agent in extracting the paper's metadata. "
             "Wrong labels produce wrong structure, which causes incorrect formatting — your "
             "accuracy directly determines the quality of the final formatted manuscript. "
-            "When input is very large, you prioritize labelling the structural skeleton "
-            "(title, abstract, headings, references) over exhaustive body paragraph coverage."
+            "When input is very large, you ensure that you label EVERY section "
+            "and block without skipping or truncating content."
         ),
         llm=llm,
         allow_delegation=False,

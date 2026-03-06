@@ -23,7 +23,7 @@ from tools.logger import get_logger
 logger = get_logger(__name__)
 
 # Maximum characters sent to the LLM pipeline (safe under typical 32K token windows)
-MAX_CHARS = 32_000
+MAX_CHARS = 1000000
 
 # Characters to include per section when truncating a large section
 _SECTION_PREVIEW_CHARS = 600

@@ -254,7 +254,7 @@ def create_transform_agent(llm: Any) -> Agent:
             "    check label prefix per rules.tables.label_prefix\n\n"
             "DOCX_INSTRUCTIONS.SECTIONS — CRITICAL RULES:\n"
             "  1. sections MUST be a non-empty list (crew.py raises ValueError if missing)\n"
-            "  2. Cover ALL document content in reading order — do NOT skip sections\n"
+            "  2. Cover ALL document content in reading order — do NOT skip sections or blocks\n"
             "  3. Preserve ALL original text verbatim — never delete or truncate content\n"
             "  4. Use these exact section types:\n"
             "       title           — paper title with {bold, centered, font_size}\n"

@@ -93,14 +93,14 @@ export default function App() {
         timeout: FORMAT_TIMEOUT_MS,
       });
 
-      clearInterval(stepInterval);
-
       // 8C: Large file — response has job_id, poll until complete
       let resultData = response.data;
       if (resultData.job_id && resultData.poll_url) {
+        // Continue moving the step indicator if we were still early in the pipeline
         resultData = await pollJobStatus(resultData.poll_url);
       }
 
+      clearInterval(stepInterval);
       setResult(resultData);
       setAppState("success");
     } catch (err) {

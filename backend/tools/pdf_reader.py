@@ -10,9 +10,9 @@ from tools.tool_errors import ExtractionError, FileProcessingError
 
 logger = get_logger(__name__)
 
-MAX_PAGES = 50
-HEAD_PAGES = 30
-TAIL_PAGES = 5
+MAX_PAGES = 500
+HEAD_PAGES = 450
+TAIL_PAGES = 50
 TRUNCATED_MARKER = "\n\n[...TRUNCATED...]\n\n"
 MIN_TEXT_RATIO = 0.1       # scanned if <10% of sampled pages have text
 GARBLE_RATIO = 0.6         # printable-char ratio below this → garbled
