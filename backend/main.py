@@ -92,9 +92,12 @@ def _run_pipeline_job(
     journal: str,
     job_id: str,
     fidelity_warnings: list,
+    mode: str = "standard",
     source_docx_path: Optional[str] = None,
     overrides: Optional[str] = None,
     custom_rules: Optional[str] = None,
+    source_file_path: Optional[str] = None,
+    **kwargs,
 ) -> None:
     """
     Background worker for async pipeline processing.
@@ -123,28 +126,31 @@ def _run_pipeline_job(
         JOB_STORE[job_id]["step_index"] = 0
         JOB_STORE[job_id]["step_name"] = "INGEST"
 
-        # Apply overrides or custom rules before pipeline runs
-        rules_override = None
-        if custom_rules and custom_rules.strip():
-            # Full Custom mode: use LLM-extracted rules directly
-            try:
-                rules_override = json.loads(custom_rules)
-                logger.info("[JOB:%s] Full Custom rules applied — style=%s",
-                            job_id, rules_override.get("style_name", "Custom"))
-            except (json.JSONDecodeError, TypeError):
-                logger.warning("[JOB:%s] Invalid custom_rules JSON, falling back to journal rules", job_id)
-        elif overrides and overrides.strip():
-            # Semi Custom mode: merge overrides into base journal rules
-            merged = _apply_overrides(load_rules(journal), overrides)
-            if merged is not None:
-                rules_override = merged
-                logger.info("[JOB:%s] Semi Custom overrides applied to rules", job_id)
+        # Use central RuleEngine to prepare final ruleset
+        from engine.rule_engine import generate_rules
+        
+        # Determine mode: standard, semi, full
+        engine_mode = "standard"
+        if mode == "semi_custom":
+            engine_mode = "semi"
+        elif mode == "full_custom":
+            engine_mode = "full"
+            
+        rules_override = generate_rules(
+            mode=engine_mode,
+            journal=journal,
+            overrides=json.loads(overrides) if overrides and overrides.strip() else None,
+            custom_rules=json.loads(custom_rules) if custom_rules and custom_rules.strip() else None,
+            guideline_pdf_bytes=kwargs.get("guideline_pdf_bytes")
+        )
+        logger.info("[JOB:%s] Rules prepared using RuleEngine — mode=%s", job_id, engine_mode)
 
         result = run_pipeline(
             paper_text, journal,
             source_docx_path=source_docx_path,
             rules_override=rules_override,
             progress_callback=_on_progress,
+            source_file_path=source_file_path,
         )
         compliance_report = result["compliance_report"]
         enriched_changes = result.get("changes_made", []) or compliance_report.get("changes_made", [])
@@ -169,14 +175,26 @@ def _run_pipeline_job(
                 "fidelity_warnings": fidelity_warnings,
                 "post_format_score": result.get("post_format_score", {}),
                 "formatting_report": result.get("formatting_report", {}),
+                "document_structure": result.get("document_structure", {}),
             },
         }
     except Exception as e:
         logger.exception("[JOB:%s] Background pipeline failed: %s", job_id, e)
+        error_msg = str(e)
+        
+        # Intercept Gemini / LiteLLM Rate Limit Errors to provide a clean message
+        if "429" in error_msg or "RateLimitError" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+            error_msg = (
+                "Google Gemini API Quota Exceeded.\n\n"
+                "The free tier limits requests to 15 per minute, and formatting "
+                "a paper consumes multiple AI pipeline requests.\n\n"
+                "Please wait 60 seconds and click 'Retry Formatting'."
+            )
+            
         JOB_STORE[job_id] = {
             "status": "error",
             "progress": 0,
-            "error": str(e),
+            "error": error_msg,
             "created_at": JOB_STORE[job_id].get("created_at", time.time()),
         }
 
@@ -370,32 +388,22 @@ def _get_fidelity_warnings(ext: str) -> list:
 def _apply_overrides(rules: dict, overrides: str) -> dict:
     """
     Apply Semi Custom structured overrides to journal rules.
-
-    Accepts a JSON string of structured overrides (e.g. {"document": {"font": "Arial"}})
-    and merges validated fields into the rules dict.
+    Leverages RuleEngine.generate_rules for robustness.
     """
     if not overrides or not overrides.strip():
         return rules
 
     try:
         overrides_json = json.loads(overrides)
-    except (json.JSONDecodeError, TypeError):
-        logger.warning("[OVERRIDES] Invalid JSON in overrides, ignoring: %s", overrides[:100])
+        from engine.rule_engine import generate_rules
+        return generate_rules(
+            mode="semi",
+            journal=rules.get("style_name", "Standard"),
+            overrides=overrides_json
+        )
+    except Exception as e:
+        logger.warning("[OVERRIDES] Failed to apply overrides: %s", e)
         return rules
-
-    if not isinstance(overrides_json, dict):
-        return rules
-
-    rules = json.loads(json.dumps(rules))  # deep copy
-
-    # Validate and apply only allowed fields
-    applied, _blocked, _errors = _validate_overrides(overrides_json)
-    for item in applied:
-        section, field = item["field"].split(".", 1)
-        rules.setdefault(section, {})[field] = item["value"]
-
-    logger.info("[OVERRIDES] Applied structured overrides")
-    return rules
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +428,27 @@ OVERRIDE_SCHEMA = {
         "type": "enum_float",
         "values": [1.0, 1.15, 1.5, 2.0],
         "label": "Line Spacing",
+    },
+    "document.alignment": {
+        "type": "enum",
+        "values": ["left", "justify", "center", "right"],
+        "label": "Alignment",
+    },
+    "document.margins.top": {
+        "type": "string",
+        "label": "Margin Top",
+    },
+    "document.margins.bottom": {
+        "type": "string",
+        "label": "Margin Bottom",
+    },
+    "document.margins.left": {
+        "type": "string",
+        "label": "Margin Left",
+    },
+    "document.margins.right": {
+        "type": "string",
+        "label": "Margin Right",
     },
     "headings.numbering_style": {
         "type": "enum",
@@ -781,10 +810,19 @@ async def get_journal_defaults(journal: str) -> JSONResponse:
         })
 
     rules = load_rules(journal)
+    
+    def get_nested(d, path):
+        keys = path.split(".")
+        cur = d
+        for k in keys:
+            if not isinstance(cur, dict) or k not in cur:
+                return None
+            cur = cur[k]
+        return cur
+
     defaults = {}
     for dotted in OVERRIDE_SCHEMA:
-        section, field = dotted.split(".", 1)
-        val = rules.get(section, {}).get(field)
+        val = get_nested(rules, dotted)
         if val is not None:
             defaults[dotted] = val
 
@@ -792,9 +830,6 @@ async def get_journal_defaults(journal: str) -> JSONResponse:
         "journal": journal,
         "style_name": rules.get("style_name", journal),
         "defaults": defaults,
-        "schema": {k: {"label": v["label"], "type": v["type"],
-                        "values": v.get("values"), "min": v.get("min"), "max": v.get("max")}
-                   for k, v in OVERRIDE_SCHEMA.items()},
     })
 
 
@@ -837,6 +872,7 @@ async def format_document(
     paper_text = None
     ext = None
     source_docx_path = None
+    source_file_path = None  # For media extraction (images/tables) — works for both PDF and DOCX
     original_filename = None
 
     if doc_id:
@@ -845,9 +881,11 @@ async def format_document(
         paper_text = doc["text"]
         ext = doc["ext"]
         original_filename = doc.get("filename", "document")
-        # Provide source DOCX path for in-place transformation
-        if ext == "docx" and doc.get("upload_path") and Path(doc["upload_path"]).exists():
-            source_docx_path = doc["upload_path"]
+        # Provide source paths for in-place transformation and media extraction
+        if doc.get("upload_path") and Path(doc["upload_path"]).exists():
+            source_file_path = doc["upload_path"]
+            if ext == "docx":
+                source_docx_path = doc["upload_path"]
         logger.info("[FORMAT:%s] Using pre-uploaded doc_id=%s (%s)", job_id, doc_id, ext)
 
     elif file:
@@ -878,6 +916,7 @@ async def format_document(
         try:
             paper_text = _extract_text(str(upload_path), ext)
             _validate_text_quality(paper_text, job_id)
+            source_file_path = str(upload_path)  # For media extraction
             if ext == "docx":
                 source_docx_path = str(upload_path)
         except Exception:
@@ -912,26 +951,10 @@ async def format_document(
         })
 
     # ── Handle full_custom guideline PDF ──────────────────────────────────
-    guideline_text = None
+    guideline_pdf_bytes = None
     if mode == "full_custom" and guideline_pdf:
-        gl_ext = _get_extension(guideline_pdf.filename or "")
-        if gl_ext not in ("pdf", "docx", "txt"):
-            raise HTTPException(status_code=422, detail={
-                "success": False,
-                "error": "Guideline file must be PDF, DOCX, or TXT.",
-                "step": "validation",
-            })
-        gl_content = await guideline_pdf.read()
-        gl_path = UPLOADS_DIR / f"{job_id}_guideline.{gl_ext}"
-        try:
-            gl_path.write_bytes(gl_content)
-            guideline_text = _extract_text(str(gl_path), gl_ext)
-            logger.info("[FORMAT:%s] Guideline PDF extracted — %d chars", job_id, len(guideline_text))
-        except Exception as e:
-            logger.warning("[FORMAT:%s] Guideline extraction failed: %s", job_id, e)
-        finally:
-            if gl_path.exists():
-                gl_path.unlink(missing_ok=True)
+        guideline_pdf_bytes = await guideline_pdf.read()
+        logger.info("[FORMAT:%s] Guideline PDF received (%d bytes)", job_id, len(guideline_pdf_bytes))
 
     # ── Fidelity warnings ─────────────────────────────────────────────────
     fidelity_warnings = _get_fidelity_warnings(ext)
@@ -954,9 +977,12 @@ async def format_document(
     background_tasks.add_task(
         _run_pipeline_job,
         paper_text, journal, job_id, fidelity_warnings,
+        mode=mode,
         source_docx_path=source_docx_path,
         overrides=overrides,
         custom_rules=custom_rules,
+        source_file_path=source_file_path,
+        guideline_pdf_bytes=guideline_pdf_bytes,
     )
 
     return JSONResponse(
@@ -1104,10 +1130,24 @@ async def get_format_result(job_id: str) -> JSONResponse:
 # GET /download/{filename} — Download formatted DOCX or PDF
 # ---------------------------------------------------------------------------
 def _convert_docx_to_pdf(docx_path: Path) -> Path:
-    """Convert DOCX to PDF using LibreOffice headless. Returns path to PDF."""
+    """Convert DOCX to PDF using LibreOffice headless or docx2pdf. Returns path to PDF."""
     pdf_path = docx_path.with_suffix(".pdf")
     if pdf_path.exists():
         return pdf_path
+
+    import sys
+    if sys.platform == "win32":
+        try:
+            from docx2pdf import convert
+            convert(str(docx_path), str(pdf_path))
+            if pdf_path.exists():
+                logger.info("[PDF] Converted %s → %s via docx2pdf", docx_path.name, pdf_path.name)
+                return pdf_path
+        except ImportError:
+            logger.warning("[PDF] docx2pdf not installed. Falling back to LibreOffice.")
+        except Exception as e:
+            logger.warning("[PDF] docx2pdf conversion failed: %s. Falling back to LibreOffice.", str(e))
+
     try:
         result = subprocess.run(
             ["libreoffice", "--headless", "--convert-to", "pdf",
@@ -1122,7 +1162,10 @@ def _convert_docx_to_pdf(docx_path: Path) -> Path:
         logger.info("[PDF] Converted %s → %s", docx_path.name, pdf_path.name)
         return pdf_path
     except FileNotFoundError:
-        raise RuntimeError("LibreOffice not installed. Cannot convert to PDF.")
+        msg = "LibreOffice not installed. Cannot convert to PDF."
+        if sys.platform == "win32":
+            msg += " Make sure docx2pdf and Microsoft Word are installed."
+        raise RuntimeError(msg)
     except subprocess.TimeoutExpired:
         raise RuntimeError("PDF conversion timed out.")
 
@@ -1310,14 +1353,67 @@ async def preview_file(filepath: str) -> HTMLResponse:
   ::-webkit-scrollbar-thumb {{ background: #bbb; border-radius: 4px; }}
   ::-webkit-scrollbar-thumb:hover {{ background: #999; }}
   {col_css}
+  /* Editable mode styles */
+  .page-body[contenteditable="true"] {{
+    outline: none;
+    cursor: text;
+  }}
+  .page-body[contenteditable="true"]:focus {{
+    box-shadow: inset 0 0 0 2px rgba(59,130,246,0.3);
+    border-radius: 4px;
+  }}
+  .edit-banner {{
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    background: #2563eb;
+    color: #fff;
+    text-align: center;
+    padding: 6px 12px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    display: none;
+  }}
+  .edit-banner.visible {{
+    display: block;
+  }}
+  body.editing {{
+    padding-top: 32px;
+  }}
 </style>
 </head>
 <body>
+<div class="edit-banner" id="editBanner">Editing Mode — Make your changes directly in the document</div>
 <div class="page">
-<div class="page-body">
+<div class="page-body" id="pageBody">
 {html_body}
 </div>
 </div>
+<script>
+  // Listen for messages from parent window to toggle edit mode and extract content
+  window.addEventListener('message', function(e) {{
+    var body = document.getElementById('pageBody');
+    var banner = document.getElementById('editBanner');
+
+    if (e.data && e.data.type === 'SET_EDITABLE') {{
+      var editable = !!e.data.editable;
+      body.contentEditable = editable ? 'true' : 'false';
+      banner.classList.toggle('visible', editable);
+      document.body.classList.toggle('editing', editable);
+    }}
+
+    if (e.data && e.data.type === 'GET_HTML') {{
+      // Return the edited HTML content to the parent
+      window.parent.postMessage({{
+        type: 'EDITED_HTML',
+        html: body.innerHTML
+      }}, '*');
+    }}
+  }});
+</script>
 </body>
 </html>"""
         return HTMLResponse(content=html_page)
@@ -1330,30 +1426,341 @@ async def preview_file(filepath: str) -> HTMLResponse:
 
 
 # ---------------------------------------------------------------------------
+# POST /rebuild-docx — Surgically apply user text edits onto original DOCX
+# Uses _paramap.json (saved at format time) as ground truth — NO mammoth.
+# ---------------------------------------------------------------------------
+
+def _normalize_text(text: str) -> str:
+    """
+    Normalize text for comparison — collapse whitespace, strip, and
+    normalize unicode so that browser contenteditable differences
+    (entity decoding, whitespace normalization) don't cause false diffs.
+    """
+    t = text.replace("\xa0", " ")   # non-breaking space → space
+    t = t.replace("\u200b", "")     # zero-width space
+    t = t.replace("\u2019", "'")    # smart quotes → ascii
+    t = t.replace("\u2018", "'")
+    t = t.replace("\u201c", '"')
+    t = t.replace("\u201d", '"')
+    t = t.replace("\u2013", "-")    # en-dash
+    t = t.replace("\u2014", "-")    # em-dash
+    # Collapse all whitespace runs to single space
+    t = re.sub(r'\s+', ' ', t).strip()
+    return t
+
+
+def _extract_text_blocks(html: str) -> list[str]:
+    """Extract ordered plain text blocks from contenteditable HTML."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+    blocks: list[str] = []
+    BLOCK_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li",
+                  "td", "th", "blockquote", "pre", "div"}
+
+    for el in soup.find_all(BLOCK_TAGS):
+        # Skip nested blocks (e.g. <p> inside <div>)
+        if el.find_parent(BLOCK_TAGS):
+            continue
+        text = _normalize_text(el.get_text(separator=" ", strip=True))
+        if text:
+            blocks.append(text)
+
+    return blocks
+
+
+@app.post("/rebuild-docx")
+async def rebuild_docx_from_html(request: Request) -> FileResponse:
+    """
+    Surgically patch only changed paragraphs in the original formatted DOCX.
+
+    Uses the _paramap.json (saved at format time by crew.py) as the ground
+    truth for paragraph text and indices — never goes through mammoth.
+    This guarantees:
+    - Paragraph styles (Heading 1, IEEE Body, etc.) are NEVER touched
+    - Only run.text is modified for paragraphs where text actually changed
+    - Index alignment uses SequenceMatcher to handle block-count drift
+    """
+    body = await request.json()
+    html_content = body.get("html", "")
+    original_filepath = body.get("original_filepath", "")
+    download_format = body.get("format", "docx")  # "docx" or "pdf"
+
+    if not html_content or not html_content.strip():
+        raise HTTPException(status_code=400, detail="No HTML content provided.")
+
+    if not original_filepath:
+        raise HTTPException(status_code=400, detail="Original file path is required.")
+
+    request_id = uuid.uuid4().hex[:8]
+    logger.info("[REBUILD:%s] POST /rebuild-docx — format=%s original=%s",
+                request_id, download_format, original_filepath)
+
+    try:
+        import difflib
+        from docx import Document as DocxDocument
+
+        # ── 1. Locate original DOCX and its paramap ────────────────
+        orig_path = (OUTPUTS_DIR / original_filepath).resolve()
+        if not str(orig_path).startswith(str(OUTPUTS_DIR.resolve())):
+            raise HTTPException(status_code=403, detail="Access denied.")
+        if not orig_path.exists():
+            raise HTTPException(status_code=404, detail="Original DOCX not found.")
+
+        paramap_path = str(orig_path).replace(".docx", "_paramap.json")
+        if not Path(paramap_path).exists():
+            raise HTTPException(status_code=404, detail="Paragraph map not found. Please re-format the document.")
+
+        with open(paramap_path, "r", encoding="utf-8") as f:
+            para_map = json.load(f)
+
+        # ── 2. Build original text list from paramap ────────────────
+        # para_map entries: {"index": int, "text": str, "style": str}
+        original_texts = [_normalize_text(p["text"]) for p in para_map]
+        para_indices = [p["index"] for p in para_map]  # actual doc.paragraphs index
+
+        # ── 3. Extract text blocks from edited HTML ─────────────────
+        edited_blocks = _extract_text_blocks(html_content)
+
+        logger.info("[REBUILD:%s] Paramap entries: %d, Edited blocks: %d",
+                    request_id, len(original_texts), len(edited_blocks))
+
+        # ── 4. Align using SequenceMatcher to handle count drift ────
+        matcher = difflib.SequenceMatcher(
+            None, original_texts, edited_blocks, autojunk=False
+        )
+
+        patches: dict[int, str] = {}  # doc.paragraphs real index → new text
+        for op, i1, i2, j1, j2 in matcher.get_opcodes():
+            if op == "replace":
+                for offset, orig_idx in enumerate(range(i1, i2)):
+                    if j1 + offset < j2:
+                        new_text = edited_blocks[j1 + offset]
+                        if new_text != original_texts[orig_idx]:
+                            real_para_idx = para_indices[orig_idx]
+                            patches[real_para_idx] = new_text
+            # 'equal' — skip (no change)
+            # 'insert'/'delete' — skip for surgical edit (only text replacement)
+
+        logger.info("[REBUILD:%s] %d paragraphs need patching (out of %d)",
+                    request_id, len(patches), len(original_texts))
+
+        if not patches:
+            # Nothing changed — return the original file as-is
+            dl_name = Path(original_filepath).name
+            if download_format == "pdf":
+                pdf_path = _convert_docx_to_pdf(orig_path)
+                return FileResponse(
+                    path=str(pdf_path), filename=dl_name.replace(".docx", ".pdf"),
+                    media_type="application/pdf",
+                )
+            return FileResponse(
+                path=str(orig_path), filename=dl_name,
+                media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+
+        # ── 5. Load DOCX and apply patches ──────────────────────────
+        doc = DocxDocument(str(orig_path))
+
+        patched = 0
+        for para_idx, new_text in patches.items():
+            if para_idx >= len(doc.paragraphs):
+                logger.warning("[REBUILD:%s] Para index %d out of range (%d paras), skipping",
+                               request_id, para_idx, len(doc.paragraphs))
+                continue
+
+            para = doc.paragraphs[para_idx]
+
+            # Only touch run.text — NEVER touch para.style
+            if not para.runs:
+                continue
+
+            # Write new text into first run, clear the rest
+            first_run = para.runs[0]
+            first_run.text = new_text
+            for run in para.runs[1:]:
+                run.text = ""
+
+            patched += 1
+
+        logger.info("[REBUILD:%s] Patched %d/%d paragraphs (styles untouched)",
+                    request_id, patched, len(patches))
+
+        # ── 6. Save to a new file ───────────────────────────────────
+        out_dir = OUTPUTS_DIR / f"run_{request_id}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "edited_paper.docx"
+        doc.save(str(out_path))
+
+        logger.info("[REBUILD:%s] DOCX saved — %s (%.1f KB)",
+                    request_id, out_path, out_path.stat().st_size / 1024)
+
+        # ── 7. Return as DOCX or convert to PDF ────────────────────
+        if download_format == "pdf":
+            try:
+                pdf_path = _convert_docx_to_pdf(out_path)
+                return FileResponse(
+                    path=str(pdf_path),
+                    filename="edited_paper.pdf",
+                    media_type="application/pdf",
+                    headers={"Content-Disposition": 'attachment; filename="edited_paper.pdf"'},
+                )
+            except RuntimeError as e:
+                raise HTTPException(status_code=500, detail={
+                    "success": False, "error": str(e),
+                })
+
+        return FileResponse(
+            path=str(out_path),
+            filename="edited_paper.docx",
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": 'attachment; filename="edited_paper.docx"'},
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        logger.error("[REBUILD:%s] Error: %s\n%s", request_id, e, tb)
+        raise HTTPException(status_code=500, detail=f"Rebuild failed: {str(e)[:300]}")
+
+
+# ---------------------------------------------------------------------------
+# Custom rules normalizer — deep-merge LLM output with guaranteed defaults
+# ---------------------------------------------------------------------------
+
+def _normalize_custom_rules(rules: dict, request_id: str = "") -> dict:
+    """
+    Deep-merge LLM-generated rules with DEFAULT_RULES from rule_engine.
+
+    Reuses the same canonical defaults that the pipeline uses, so
+    every sub-key the DOCX writer reads is guaranteed to exist.
+    LLM values always take priority over defaults.
+    """
+    from engine.rule_engine import DEFAULT_RULES, apply_defaults, _sanitise_llm_rules
+
+    sanitised = _sanitise_llm_rules(rules)
+    normalized = apply_defaults(sanitised)
+
+    # Ensure title_page and equations exist
+    if "title_page" not in normalized:
+        normalized["title_page"] = dict(DEFAULT_RULES["title_page"])
+    if "equations" not in normalized:
+        normalized["equations"] = dict(DEFAULT_RULES["equations"])
+
+    filled = [k for k in DEFAULT_RULES if k not in rules and isinstance(DEFAULT_RULES.get(k), dict)]
+    if filled:
+        logger.warning("[EXTRACT-RULES:%s] Filled missing top-level keys with defaults: %s", request_id, filled)
+
+    return normalized
+
+
+# ---------------------------------------------------------------------------
 # POST /extract-rules — Full Custom: Extract rules from guideline PDF via LLM
 # ---------------------------------------------------------------------------
 _RULES_EXTRACTION_PROMPT = """You are an expert academic formatting analyst. Given the text of a journal's author guidelines document, extract the formatting rules into a structured JSON object.
 
-You MUST return ONLY a valid JSON object with EXACTLY these 11 top-level keys:
-- style_name (string): Name of the formatting style
-- document (object): font, font_size, line_spacing, margins (top/bottom/left/right), alignment, columns
-- title_page (object): title_case, title_bold, title_centered, title_font_size
-- abstract (object): label, label_bold, label_centered, label_italic, max_words, indent_first_line, keywords_present
-- headings (object): H1/H2/H3 each with bold, italic, centered, underline, case, numbering, font_size
-- citations (object): style (author-date or numbered), brackets, format examples
-- references (object): section_label, ordering, hanging_indent, formats for journal_article/book/website
-- figures (object): label_prefix, caption_position (above/below), numbering
-- tables (object): label_prefix, caption_position, numbering, border_style
-- equations (object): numbering, numbering_format
-- general_rules (object): doi_format, date_format, et_al_threshold, oxford_comma
+You MUST return ONLY a valid JSON object with EXACTLY these top-level keys and sub-keys:
+
+1. style_name (string): Name of the formatting style
+
+2. document (object):
+   - font (string, e.g. "Times New Roman")
+   - font_size (integer, e.g. 12)
+   - line_spacing (float, e.g. 2.0)
+   - margins (object): top, bottom, left, right — each a string like "1in"
+   - alignment (string): "left" | "justify" | "center" | "right"
+   - columns (integer, 1 or 2)
+
+3. title_page (object):
+   - title_case (string): "Title Case" | "UPPERCASE" | "Sentence case"
+   - title_bold (boolean)
+   - title_centered (boolean)
+   - title_font_size (integer)
+
+4. abstract (object):
+   - label (string, e.g. "Abstract")
+   - label_bold (boolean)
+   - label_centered (boolean)
+   - label_italic (boolean)
+   - max_words (integer, e.g. 250)
+   - indent_first_line (boolean)
+   - keywords_present (boolean)
+   - keywords_label (string, e.g. "Keywords:")
+   - keywords_italic (boolean)
+
+5. headings (object): H1, H2, H3 — each with:
+   - bold (boolean)
+   - italic (boolean)
+   - centered (boolean)
+   - underline (boolean)
+   - case (string): "Title Case" | "UPPERCASE" | "Sentence case"
+   - numbering (string): "none" | "numeric" | "roman" | "alpha"
+   - font_size (integer)
+
+6. citations (object):
+   - style (string): "author-date" | "numbered"
+   - brackets (string): "parentheses" | "square" | "none"
+   - format_one_author (string, e.g. "(Author Year)")
+   - format_two_authors (string, e.g. "(Author & Author Year)")
+   - format_three_plus (string, e.g. "(Author et al. Year)")
+   - format_numbered (string or null, e.g. "[N]")
+   - include_page_for_quotes (boolean)
+   - page_format (string, e.g. "p. 45")
+
+7. references (object):
+   - section_label (string, e.g. "References")
+   - label_bold (boolean)
+   - label_centered (boolean)
+   - label_italic (boolean)
+   - ordering (string): "alphabetical" | "appearance"
+   - hanging_indent (boolean)
+   - indent_size (string, e.g. "0.5in")
+   - line_spacing (float, e.g. 2.0)
+   - space_between_entries (boolean)
+   - formats (object): journal_article, book, book_chapter, website, conference_paper — each a string template
+
+8. figures (object):
+   - label_prefix (string, e.g. "Figure" or "Fig.")
+   - label_bold (boolean)
+   - label_italic (boolean)
+   - caption_position (string): "above" | "below"
+   - caption_italic (boolean)
+   - caption_alignment (string): "left" | "center" | "right"
+   - numbering (string): "arabic" | "roman"
+   - note_label (string, e.g. "Note:")
+
+9. tables (object):
+   - label_prefix (string, e.g. "Table")
+   - label_bold (boolean)
+   - label_italic (boolean)
+   - caption_position (string): "above" | "below"
+   - caption_italic (boolean)
+   - caption_alignment (string): "left" | "center" | "right"
+   - numbering (string): "arabic" | "roman"
+   - border_style (string): "full" | "full_grid" | "top_bottom_only" | "header_only" | "none"
+   - note_label (string, e.g. "Note:")
+
+10. equations (object):
+    - numbering (string, e.g. "right_aligned")
+    - numbering_format (string, e.g. "(1)")
+
+11. general_rules (object):
+    - doi_format (string)
+    - url_format (string)
+    - date_format (string)
+    - et_al_threshold (integer)
+    - use_ampersand_in_citations (boolean)
+    - use_ampersand_in_references (boolean)
+    - oxford_comma (boolean)
 
 IMPORTANT RULES:
+- You MUST include ALL sub-keys listed above in your output
 - If a specific rule is not mentioned in the guidelines, use sensible academic defaults
 - font_size must be an integer (e.g., 12)
 - line_spacing must be a float (e.g., 2.0)
 - margins should be strings like "1in"
-- For headings, numbering should be one of: "none", "roman", "numeric", "alpha"
-- For citations style, use "author-date" or "numbered"
 - Return ONLY the JSON object, no markdown fences, no explanation
 
 Here is the guideline document text:
@@ -1435,25 +1842,9 @@ async def extract_rules_from_guidelines(
 
         rules = json.loads(json_text)
 
-        # Validate required keys
-        required_keys = [
-            "style_name", "document", "abstract", "headings",
-            "citations", "references", "figures", "tables",
-            "general_rules",
-        ]
-        missing = [k for k in required_keys if k not in rules]
-        if missing:
-            logger.warning("[EXTRACT-RULES:%s] LLM output missing keys: %s", request_id, missing)
-            # Fill in missing keys with defaults
-            defaults = json.loads((RULES_DIR / "apa7.json").read_text())
-            for k in missing:
-                rules[k] = defaults.get(k, {})
-
-        # Ensure title_page and equations exist
-        if "title_page" not in rules:
-            rules["title_page"] = {"title_case": "Title Case", "title_bold": True, "title_centered": True, "title_font_size": 12}
-        if "equations" not in rules:
-            rules["equations"] = {"numbering": "right_aligned", "numbering_format": "(1)"}
+        # Deep-merge with defaults so every sub-key the DOCX writer
+        # reads is guaranteed to exist, even if the LLM skipped it.
+        rules = _normalize_custom_rules(rules, request_id)
 
         logger.info("[EXTRACT-RULES:%s] Rules extracted — style=%s keys=%d",
                     request_id, rules.get("style_name", "Custom"), len(rules))

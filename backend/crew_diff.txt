@@ -1,0 +1,662 @@
+--- 
+
++++ 
+
+@@ -23,0 +24 @@
+
++from tools.docx_reader import extract_docx_text
+
+@@ -25,0 +27,2 @@
+
++from tools.media_extractor import extract_all_media, map_figures_to_images, map_tables_to_captions
+
++from tools.pre_format_scorer import score_pre_format
+
+@@ -41,0 +45,4 @@
+
++# Set global litellm request timeout so httpx doesn't use its own (low) default.
+
++litellm.request_timeout = int(os.getenv("LLM_TIMEOUT", "300"))
+
++# Retry on transient failures (429, 500, timeout)
+
++litellm.num_retries = int(os.getenv("LLM_MAX_RETRIES", "3"))
+
+@@ -461,2 +468,2 @@
+
+-        f"  format: {cit_rules.get('format', '?')}  "
+
+-        f"(numbered = [1], [2] style  |  author_date = (Smith, 2020) style)",
+
++        f"  format: {cit_rules.get('style', cit_rules.get('format', '?'))}  "
+
++        f"(numbered = [1], [2] style  |  author-date = (Smith, 2020) style)",
+
+@@ -663,3 +670,6 @@
+
+-    """Logs wall-clock duration of each CrewAI task and accumulates stage_times."""
+
+-
+
+-    def __init__(self) -> None:
+
++    """Logs wall-clock duration of each CrewAI task, updates progress callback."""
+
++
+
++    # Progress percentages after each step completes
+
++    _STEP_PROGRESS = [20, 40, 75, 95]
+
++
+
++    def __init__(self, progress_callback=None) -> None:
+
+@@ -667,0 +678 @@
+
++        self._pipeline_start = time.time()
+
+@@ -668,0 +680 @@
+
++        self._progress_callback = progress_callback
+
+@@ -671,0 +684 @@
+
++        total_elapsed = round(time.time() - self._pipeline_start, 1)
+
+@@ -677,0 +691,7 @@
+
++
+
++        progress = (
+
++            self._STEP_PROGRESS[self._step_index]
+
++            if self._step_index < len(self._STEP_PROGRESS)
+
++            else 95
+
++        )
+
++
+
+@@ -679,3 +699,14 @@
+
+-            "[PIPELINE] Step %d/4 — %-10s completed in %.2fs",
+
+-            self._step_index + 1, name, elapsed,
+
+-        )
+
++            "[PIPELINE] Step %d/4 — %-10s completed in %.2fs (total: %.1fs, progress: %d%%)",
+
++            self._step_index + 1, name, elapsed, total_elapsed, progress,
+
++        )
+
++
+
++        # Notify caller (main.py) to update JOB_STORE
+
++        if self._progress_callback:
+
++            self._progress_callback(
+
++                step_index=self._step_index + 1,  # completed step (1-indexed)
+
++                progress=progress,
+
++                step_name=name,
+
++                step_elapsed=elapsed,
+
++                total_elapsed=total_elapsed,
+
++            )
+
++
+
+@@ -686 +717 @@
+
+-def _validate_task_outputs(crew: Crew) -> None:
+
++def _validate_task_outputs(crew: Crew) -> str:
+
+@@ -692,0 +724,3 @@
+
++
+
++    Returns:
+
++        run_id (str): Unique 6-char hex identifier for this pipeline run.
+
+@@ -697 +731 @@
+
+-    # Save intermediate outputs to outputs/ folder for debugging
+
++    # Save intermediate outputs to a per-run subfolder for clean organization
+
+@@ -699,2 +733,2 @@
+
+-    outputs_dir = Path(__file__).parent / "outputs"
+
+-    outputs_dir.mkdir(exist_ok=True)
+
++    run_dir = Path(__file__).parent / "outputs" / f"run_{run_id}"
+
++    run_dir.mkdir(parents=True, exist_ok=True)
+
+@@ -714 +748 @@
+
+-            debug_path = outputs_dir / f"intermediate_{run_id}_{idx+1}_{name}.txt"
+
++            debug_path = run_dir / f"{idx+1}_{name}.txt"
+
+@@ -745,2 +779,4 @@
+
+-
+
+-def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optional[str] = None) -> dict:
+
++    return run_id
+
++
+
++
+
++def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optional[str] = None, rules_override: Optional[dict] = None, progress_callback=None, source_file_path: Optional[str] = None) -> dict:
+
+@@ -755,0 +792,2 @@
+
++        rules_override: Pre-merged rules dict (with overrides applied).
+
++                        If provided, skips load_rules() and uses this directly.
+
+@@ -801,2 +839,2 @@
+
+-    
+
+-    # Use high max_tokens to prevent truncation — Gemini 2.5 Flash uses
+
++
+
++    # Use high max_tokens to prevent truncation — Gemini Flash uses
+
+@@ -804 +841,0 @@
+
+-    # 65536 is the max for Gemini 2.5 Flash.
+
+@@ -814,3 +851,7 @@
+
+-    logger.info("[PIPELINE] Loading rules for '%s'...", journal_style)
+
+-    rules = load_rules(journal_style)
+
+-    logger.info("[PIPELINE] Rules loaded — %d sections", len(rules))
+
++    if rules_override:
+
++        logger.info("[PIPELINE] Using pre-merged rules (with overrides) — %d sections", len(rules_override))
+
++        rules = rules_override
+
++    else:
+
++        logger.info("[PIPELINE] Loading rules for '%s'...", journal_style)
+
++        rules = load_rules(journal_style)
+
++        logger.info("[PIPELINE] Rules loaded — %d sections", len(rules))
+
+@@ -831,0 +873,17 @@
+
++
+
++    # ── Media extraction — side-channel for images & tables (bypasses LLM) ──
+
++    # Determine source file path: prefer explicit param, fall back to source_docx_path
+
++    _media_source = source_file_path or source_docx_path
+
++    media_data: dict = {"source_type": "unknown", "raw_images": [], "raw_tables": []}
+
++    if _media_source and Path(_media_source).exists():
+
++        try:
+
++            media_data = extract_all_media(_media_source)
+
++            logger.info(
+
++                "[PIPELINE] Media extracted — %d images, %d tables from %s (%s)",
+
++                len(media_data["raw_images"]), len(media_data["raw_tables"]),
+
++                Path(_media_source).name, media_data["source_type"],
+
++            )
+
++        except Exception as _media_err:
+
++            logger.warning("[PIPELINE] Media extraction failed (non-fatal): %s", _media_err)
+
++    else:
+
++        logger.info("[PIPELINE] No source file for media extraction — figures/tables will use placeholders")
+
+@@ -1065 +1123 @@
+
+-    step_timer = _StepTimer()
+
++    step_timer = _StepTimer(progress_callback=progress_callback)
+
+@@ -1088 +1146 @@
+
+-            _validate_task_outputs(crew)
+
++            run_id = _validate_task_outputs(crew)
+
+@@ -1110 +1168,5 @@
+
+-    logger.info("[PIPELINE] All steps complete — parsing compliance report...")
+
++    logger.info("[PIPELINE] All steps complete — parsing outputs...")
+
++    parse_raw = _get_task_output(crew, task_index=1)
+
++    transform_raw = _get_task_output(crew, task_index=2)
+
++    transform_data = extract_json_from_llm(transform_raw)
+
++
+
+@@ -1114,0 +1177,21 @@
+
++    # ── Map extracted media to figure/table captions from PARSE output ─────────
+
++    image_store: dict = {}
+
++    table_store: dict = {}
+
++    try:
+
++        _parse_data = extract_json_from_llm(parse_raw)
+
++        figure_captions = _parse_data.get("figures", [])
+
++        table_captions = _parse_data.get("tables", [])
+
++        if media_data["raw_images"] or media_data["raw_tables"]:
+
++            image_store = map_figures_to_images(
+
++                media_data["raw_images"], figure_captions, media_data["source_type"],
+
++            )
+
++            table_store = map_tables_to_captions(
+
++                media_data["raw_tables"], table_captions, media_data["source_type"],
+
++            )
+
++            logger.info(
+
++                "[PIPELINE] Media mapped — %d figures, %d tables",
+
++                len(image_store), len(table_store),
+
++            )
+
++    except Exception as _map_err:
+
++        logger.warning("[PIPELINE] Media mapping failed (non-fatal): %s", _map_err)
+
++
+
+@@ -1116,2 +1198,0 @@
+
+-    # Extract paper_structure from parse_task (index 1) to run exact checks.
+
+-    # Any failure here is non-fatal — the LLM scores remain as fallback.
+
+@@ -1119 +1199,0 @@
+
+-        parse_raw = _get_task_output(crew, task_index=1)
+
+@@ -1137,3 +1216,0 @@
+
+-    logger.info("[PIPELINE] Extracting transform output for DOCX generation...")
+
+-    transform_raw = _get_task_output(crew, task_index=2)
+
+-
+
+@@ -1141,2 +1217,0 @@
+
+-    # The transform agent runs violation scanning inline (PHASE A) then fixes (PHASE B).
+
+-    # Surface violations for the "Interpret" phase and enrich changes_made with rule refs.
+
+@@ -1146 +1221 @@
+
+-        _transform_data_preview = extract_json_from_llm(transform_raw)
+
++        _transform_data_preview = transform_data
+
+@@ -1150,0 +1226,21 @@
+
++            structured_violations = []
+
++            for i, v in enumerate(_violations):
+
++                if not isinstance(v, dict):
+
++                    v = {"text": str(v), "message": str(v)}
+
++                
+
++                v_text = v.get("text", v.get("current", ""))
+
++                start_char = paper_content.find(v_text) if v_text else -1
+
++                end_char = start_char + len(v_text) if start_char != -1 else -1
+
++
+
++                structured_violations.append({
+
++                    "id": f"v{i+1}",
+
++                    "element": v.get("element", ""),
+
++                    "text": v_text,
+
++                    "start_char": start_char,
+
++                    "end_char": end_char,
+
++                    "message": v.get("message", "Formatting violation"),
+
++                    "expected": v.get("expected", v.get("required", "")),
+
++                    "rule_reference": v.get("rule_reference", v.get("apa_ref", "")),
+
++                    "severity": v.get("severity", "medium")
+
++                })
+
++            
+
+@@ -1152,2 +1248,2 @@
+
+-                "violations": _violations,
+
+-                "total_violations": len(_violations),
+
++                "violations": structured_violations,
+
++                "total_violations": len(structured_violations),
+
+@@ -1158 +1254 @@
+
+-                len(_violations),
+
++                len(structured_violations),
+
+@@ -1175 +1271,4 @@
+
+-    docx_filename = _write_docx_from_transform(transform_raw, rules, source_docx_path, paper_content, style_key)
+
++    docx_filename = _write_docx_from_transform(
+
++        transform_raw, rules, source_docx_path, paper_content, style_key,
+
++        run_id=run_id, image_store=image_store, table_store=table_store,
+
++    )
+
+@@ -1194,0 +1294,17 @@
+
++    # ── Post-format scoring — re-score the output DOCX against same rules ──
+
++    post_format_score: dict = {}
+
++    try:
+
++        output_text = extract_docx_text(str(output_path))
+
++        post_format_score = score_pre_format(output_text, rules)
+
++        logger.info(
+
++            "[PIPELINE] Post-format score: %d (from output DOCX)",
+
++            post_format_score.get("total_score", -1),
+
++        )
+
++    except Exception as _pfs_err:
+
++        logger.warning("[PIPELINE] Post-format scoring failed (non-fatal): %s", _pfs_err)
+
++
+
++    # ── Formatting report — what was done, skipped, needs attention ──────────
+
++    formatting_report = _build_formatting_report(
+
++        enriched_changes, interpretation_results, compliance_report,
+
++    )
+
++
+
+@@ -1198,0 +1315,9 @@
+
++
+
++    # ── Extract parsed structure for the Live Document Editor  ───────────────
+
++    document_structure = {}
+
++    try:
+
++        parse_raw = _get_task_output(crew, task_index=1)
+
++        document_structure = extract_json_from_llm(parse_raw)
+
++        logger.info("[PIPELINE] Extracted parsed document structure from Agent 2")
+
++    except Exception as e:
+
++        logger.warning("[PIPELINE] Could not extract parsed document structure: %s", e)
+
+@@ -1206,0 +1332,3 @@
+
++        "post_format_score": post_format_score,
+
++        "formatting_report": formatting_report,
+
++        "document_structure": document_structure,
+
+@@ -1211,0 +1340,62 @@
+
++
+
++
+
++def _build_formatting_report(
+
++    changes_made: list,
+
++    interpretation_results: dict,
+
++    compliance_report: dict,
+
++) -> dict:
+
++    """
+
++    Build a structured formatting report from pipeline artifacts.
+
++
+
++    Returns:
+
++        {
+
++            "done": [...],                     # auto-applied by formatter
+
++            "not_done_by_user_choice": [...],   # user override kept
+
++            "needs_manual_attention": [...]      # system can't touch (images, tables, etc.)
+
++        }
+
++    """
+
++    done: list[str] = []
+
++    not_done_by_user_choice: list[str] = []
+
++    needs_manual_attention: list[str] = []
+
++
+
++    # ── "done" — from enriched changes_made (transform PHASE B) ──────────
+
++    for change in changes_made:
+
++        if isinstance(change, str):
+
++            done.append(change)
+
++        elif isinstance(change, dict):
+
++            desc = change.get("description", change.get("change", str(change)))
+
++            done.append(str(desc))
+
++
+
++    # ── "needs_manual_attention" — from violations that remain unresolved ──
+
++    # Violations the transform couldn't fix (figures, tables, equations, images)
+
++    _manual_keywords = {"figure", "table", "image", "equation", "caption", "graph", "chart"}
+
++    violations = interpretation_results.get("violations", [])
+
++    for v in violations:
+
++        text = v if isinstance(v, str) else v.get("description", v.get("issue", str(v)))
+
++        text_lower = str(text).lower()
+
++        if any(kw in text_lower for kw in _manual_keywords):
+
++            needs_manual_attention.append(str(text))
+
++
+
++    # Also check compliance_report breakdown for low-scoring visual sections
+
++    breakdown = compliance_report.get("breakdown", {})
+
++    for section_key in ("figures", "tables"):
+
++        section = breakdown.get(section_key, {})
+
++        if isinstance(section, dict):
+
++            score = section.get("score", 100)
+
++            issues = section.get("issues", [])
+
++            if isinstance(score, (int, float)) and score < 80:
+
++                for issue in issues:
+
++                    issue_str = str(issue)
+
++                    if issue_str not in needs_manual_attention:
+
++                        needs_manual_attention.append(issue_str)
+
++
+
++    logger.info(
+
++        "[PIPELINE] Formatting report: done=%d skipped=%d manual=%d",
+
++        len(done), len(not_done_by_user_choice), len(needs_manual_attention),
+
++    )
+
++
+
++    return {
+
++        "done": done,
+
++        "not_done_by_user_choice": not_done_by_user_choice,
+
++        "needs_manual_attention": needs_manual_attention,
+
++    }
+
+@@ -1406,0 +1597,3 @@
+
++    run_id: Optional[str] = None,
+
++    image_store: Optional[dict] = None,
+
++    table_store: Optional[dict] = None,
+
+@@ -1429,2 +1622,10 @@
+
+-    output_filename = f"formatted_{uuid.uuid4().hex[:8]}.docx"
+
+-    output_path = str(OUTPUT_DIR / output_filename)
+
++    docx_basename = f"formatted_{run_id or uuid.uuid4().hex[:8]}.docx"
+
++    if run_id:
+
++        run_dir = OUTPUT_DIR / f"run_{run_id}"
+
++        run_dir.mkdir(parents=True, exist_ok=True)
+
++        output_path = str(run_dir / docx_basename)
+
++        # Return path relative to OUTPUT_DIR so download/preview endpoints can find it
+
++        output_filename = f"run_{run_id}/{docx_basename}"
+
++    else:
+
++        output_path = str(OUTPUT_DIR / docx_basename)
+
++        output_filename = docx_basename
+
+@@ -1443 +1644 @@
+
+-        build_apa_docx(transform_data, output_path)
+
++        build_apa_docx(transform_data, output_path, image_store=image_store, table_store=table_store)
+
+@@ -1466 +1667 @@
+
+-        build_ieee_docx(docx_instructions, output_path)
+
++        build_ieee_docx(docx_instructions, output_path, image_store=image_store, table_store=table_store)
+
+@@ -1497,2 +1698,2 @@
+
+-    write_formatted_docx(docx_instructions, output_path)
+
+-    return output_filename
++    write_formatted_docx(docx_instructions, output_path, image_store=image_store, table_store=table_store)
+
++    return output_filename

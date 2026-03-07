@@ -4,6 +4,7 @@ import Upload from './components/Upload'
 import ProgressScreen from './components/ProgressScreen'
 import ResultsScreen from './components/ResultsScreen'
 import SemiCustomPanel from './components/SemiCustomPanel'
+import GuidelinesUpload from './components/GuidelinesUpload'
 
 // Prevent browser from restoring scroll position on refresh
 if (typeof window !== 'undefined') {
@@ -17,93 +18,93 @@ const API = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
 const Icons = {
   logo: (
     <svg width="20" height="20" fill="none" viewBox="0 0 24 24">
-      <rect x="4" y="2" width="16" height="20" rx="3" fill="currentColor" opacity="0.15"/>
-      <path d="M8 7h8M8 11h8M8 15h5" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+      <rect x="4" y="2" width="16" height="20" rx="3" fill="currentColor" opacity="0.15" />
+      <path d="M8 7h8M8 11h8M8 15h5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
   ),
   file: (
     <svg width="28" height="28" fill="none" viewBox="0 0 24 24">
-      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/>
-      <path d="M14 2v6h6" stroke="currentColor" strokeWidth="1.8"/>
+      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="M14 2v6h6" stroke="currentColor" strokeWidth="1.8" />
     </svg>
   ),
   journals: (
     <svg width="28" height="28" fill="none" viewBox="0 0 24 24">
-      <path d="M4 19.5A2.5 2.5 0 016.5 17H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
-      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" stroke="currentColor" strokeWidth="1.8"/>
+      <path d="M4 19.5A2.5 2.5 0 016.5 17H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" stroke="currentColor" strokeWidth="1.8" />
     </svg>
   ),
   chart: (
     <svg width="28" height="28" fill="none" viewBox="0 0 24 24">
-      <path d="M18 20V10M12 20V4M6 20v-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+      <path d="M18 20V10M12 20V4M6 20v-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
   ),
   bolt: (
     <svg width="28" height="28" fill="none" viewBox="0 0 24 24">
-      <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/>
+      <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
     </svg>
   ),
   upload: (
     <svg width="28" height="28" fill="none" viewBox="0 0 24 24">
-      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
-      <polyline points="17 8 12 3 7 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-      <line x1="12" y1="3" x2="12" y2="15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <polyline points="17 8 12 3 7 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <line x1="12" y1="3" x2="12" y2="15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
   ),
   ai: (
     <svg width="28" height="28" fill="none" viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.8"/>
-      <path d="M12 2v3M12 19v3M3.22 5.64l2.12 2.12M18.66 16.24l2.12 2.12M2 12h3M19 12h3M3.22 18.36l2.12-2.12M18.66 7.76l2.12-2.12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M12 2v3M12 19v3M3.22 5.64l2.12 2.12M18.66 16.24l2.12 2.12M2 12h3M19 12h3M3.22 18.36l2.12-2.12M18.66 7.76l2.12-2.12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
   ),
   download: (
     <svg width="18" height="18" fill="none" viewBox="0 0 24 24">
-      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-      <polyline points="7 10 12 15 17 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-      <line x1="12" y1="15" x2="12" y2="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <polyline points="7 10 12 15 17 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <line x1="12" y1="15" x2="12" y2="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
   ),
   check: (
     <svg width="18" height="18" fill="none" viewBox="0 0 24 24">
-      <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
   arrow: (
     <svg width="18" height="18" fill="none" viewBox="0 0 24 24">
-      <path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
   user: (
     <svg width="18" height="18" fill="none" viewBox="0 0 24 24">
-      <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-      <circle cx="12" cy="7" r="4" stroke="currentColor" strokeWidth="2"/>
+      <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <circle cx="12" cy="7" r="4" stroke="currentColor" strokeWidth="2" />
     </svg>
   ),
   lock: (
     <svg width="18" height="18" fill="none" viewBox="0 0 24 24">
-      <rect x="3" y="11" width="18" height="11" rx="2" stroke="currentColor" strokeWidth="2"/>
-      <path d="M7 11V7a5 5 0 0110 0v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+      <rect x="3" y="11" width="18" height="11" rx="2" stroke="currentColor" strokeWidth="2" />
+      <path d="M7 11V7a5 5 0 0110 0v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
   ),
   error: (
     <svg width="28" height="28" fill="none" viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.8"/>
-      <path d="M12 8v4M12 16h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M12 8v4M12 16h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
   )
 }
 
 const FEATURES = [
-  { icon: Icons.file,     iconClass: 'fi-blue',   title: 'PDF & DOCX Input',     desc: 'Upload any research paper up to 10MB. We preserve every word.' },
-  { icon: Icons.journals, iconClass: 'fi-orange',  title: '5 Journal Styles',     desc: 'APA 7th, IEEE, Vancouver, Springer & Chicago — built in.' },
-  { icon: Icons.chart,    iconClass: 'fi-blue',   title: 'Compliance Score',     desc: 'Section-by-section accuracy score from 0–100.' },
-  { icon: Icons.bolt,     iconClass: 'fi-orange',  title: 'Sub-60 Second Speed', desc: 'Gemini 3 Flash runs 5 AI agents in parallel for fast results.' }
+  { icon: Icons.file, iconClass: 'fi-blue', title: 'PDF & DOCX Input', desc: 'Upload any research paper up to 10MB. We preserve every word.' },
+  { icon: Icons.journals, iconClass: 'fi-orange', title: '5 Journal Styles', desc: 'APA 7th, IEEE, Vancouver, Springer & Chicago — built in.' },
+  { icon: Icons.chart, iconClass: 'fi-blue', title: 'Compliance Score', desc: 'Section-by-section accuracy score from 0–100.' },
+  { icon: Icons.bolt, iconClass: 'fi-orange', title: 'Sub-60 Second Speed', desc: 'Gemini 3 Flash runs 5 AI agents in parallel for fast results.' }
 ]
 
 const STEPS = [
-  { icon: Icons.upload, title: 'Upload Your Paper',    desc: 'Drop a PDF or DOCX. We extract every section, heading, and citation.' },
-  { icon: Icons.ai,     title: 'AI Agents Format It',  desc: '5 Gemini agents fix fonts, headings, citations, and references.' },
-  { icon: Icons.download,title: 'Download & Submit',  desc: 'Get a Word document formatted to your journal — ready to submit.' }
+  { icon: Icons.upload, title: 'Upload Your Paper', desc: 'Drop a PDF or DOCX. We extract every section, heading, and citation.' },
+  { icon: Icons.ai, title: 'AI Agents Format It', desc: '5 Gemini agents fix fonts, headings, citations, and references.' },
+  { icon: Icons.download, title: 'Download & Submit', desc: 'Get a Word document formatted to your journal — ready to submit.' }
 ]
 
 // Observer hook for scroll animations
@@ -122,30 +123,30 @@ function useVisible(threshold = 0.15) {
 const CATEGORY_ICONS = {
   abstract: (
     <svg width="20" height="20" fill="none" viewBox="0 0 24 24">
-      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/>
-      <path d="M14 2v6h6M8 13h8M8 17h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="M14 2v6h6M8 13h8M8 17h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
   ),
   citations: (
     <svg width="20" height="20" fill="none" viewBox="0 0 24 24">
-      <path d="M10 11h-4a1 1 0 01-1-1V6a1 1 0 011-1h3a1 1 0 011 1v5zm0 0a4 4 0 01-4 4M20 11h-4a1 1 0 01-1-1V6a1 1 0 011-1h3a1 1 0 011 1v5zm0 0a4 4 0 01-4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M10 11h-4a1 1 0 01-1-1V6a1 1 0 011-1h3a1 1 0 011 1v5zm0 0a4 4 0 01-4 4M20 11h-4a1 1 0 01-1-1V6a1 1 0 011-1h3a1 1 0 011 1v5zm0 0a4 4 0 01-4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
   references: (
     <svg width="20" height="20" fill="none" viewBox="0 0 24 24">
-      <path d="M4 19.5A2.5 2.5 0 016.5 17H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
-      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" stroke="currentColor" strokeWidth="1.8"/>
+      <path d="M4 19.5A2.5 2.5 0 016.5 17H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" stroke="currentColor" strokeWidth="1.8" />
     </svg>
   ),
   headings: (
     <svg width="20" height="20" fill="none" viewBox="0 0 24 24">
-      <path d="M4 12h8M4 6v12M12 6v12M20 8v8" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+      <path d="M4 12h8M4 6v12M12 6v12M20 8v8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
   ),
   document_format: (
     <svg width="20" height="20" fill="none" viewBox="0 0 24 24">
-      <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.8"/>
-      <path d="M3 9h18M9 21V9" stroke="currentColor" strokeWidth="1.8"/>
+      <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M3 9h18M9 21V9" stroke="currentColor" strokeWidth="1.8" />
     </svg>
   ),
 }
@@ -190,8 +191,8 @@ function PreCheckGauge({ trustScore, onFormat, onBack }) {
   const message = score < 40
     ? 'Significant changes needed'
     : score <= 70
-    ? 'Moderate compliance'
-    : 'Well structured paper'
+      ? 'Moderate compliance'
+      : 'Well structured paper'
 
   const breakdown = trustScore.breakdown || {}
   const categories = ['abstract', 'citations', 'references', 'headings', 'document_format']
@@ -288,24 +289,24 @@ function Shutter({ onDone }) {
 
 // ─── Soda Bubbles ──────────────────────────────────────────────
 const BUBBLES = [
-  { size:8,  left:'8%',  riseDur:'10s', wobbleDur:'3.1s', delay:'0s'   },
-  { size:14, left:'16%', riseDur:'14s', wobbleDur:'4.2s', delay:'2s'   },
-  { size:6,  left:'25%', riseDur:'9s',  wobbleDur:'2.8s', delay:'1.2s' },
-  { size:20, left:'35%', riseDur:'16s', wobbleDur:'5s',   delay:'0.5s' },
-  { size:10, left:'44%', riseDur:'11s', wobbleDur:'3.5s', delay:'3.5s' },
-  { size:7,  left:'52%', riseDur:'8s',  wobbleDur:'2.5s', delay:'1.8s' },
-  { size:18, left:'60%', riseDur:'15s', wobbleDur:'4.8s', delay:'0.8s' },
-  { size:9,  left:'68%', riseDur:'12s', wobbleDur:'3.7s', delay:'4s'   },
-  { size:24, left:'75%', riseDur:'18s', wobbleDur:'6s',   delay:'2.2s' },
-  { size:12, left:'82%', riseDur:'13s', wobbleDur:'4s',   delay:'0.3s' },
-  { size:6,  left:'89%', riseDur:'9s',  wobbleDur:'2.9s', delay:'1.5s' },
-  { size:16, left:'93%', riseDur:'14s', wobbleDur:'4.3s', delay:'3s'   },
-  { size:11, left:'5%',  riseDur:'12s', wobbleDur:'3.9s', delay:'5s'   },
-  { size:8,  left:'30%', riseDur:'10s', wobbleDur:'3.2s', delay:'6s'   },
-  { size:22, left:'48%', riseDur:'17s', wobbleDur:'5.5s', delay:'4.5s' },
-  { size:7,  left:'57%', riseDur:'8s',  wobbleDur:'2.7s', delay:'7s'   },
-  { size:13, left:'72%', riseDur:'13s', wobbleDur:'4.1s', delay:'2.7s' },
-  { size:28, left:'87%', riseDur:'18s', wobbleDur:'6.2s', delay:'1s'   },
+  { size: 8, left: '8%', riseDur: '10s', wobbleDur: '3.1s', delay: '0s' },
+  { size: 14, left: '16%', riseDur: '14s', wobbleDur: '4.2s', delay: '2s' },
+  { size: 6, left: '25%', riseDur: '9s', wobbleDur: '2.8s', delay: '1.2s' },
+  { size: 20, left: '35%', riseDur: '16s', wobbleDur: '5s', delay: '0.5s' },
+  { size: 10, left: '44%', riseDur: '11s', wobbleDur: '3.5s', delay: '3.5s' },
+  { size: 7, left: '52%', riseDur: '8s', wobbleDur: '2.5s', delay: '1.8s' },
+  { size: 18, left: '60%', riseDur: '15s', wobbleDur: '4.8s', delay: '0.8s' },
+  { size: 9, left: '68%', riseDur: '12s', wobbleDur: '3.7s', delay: '4s' },
+  { size: 24, left: '75%', riseDur: '18s', wobbleDur: '6s', delay: '2.2s' },
+  { size: 12, left: '82%', riseDur: '13s', wobbleDur: '4s', delay: '0.3s' },
+  { size: 6, left: '89%', riseDur: '9s', wobbleDur: '2.9s', delay: '1.5s' },
+  { size: 16, left: '93%', riseDur: '14s', wobbleDur: '4.3s', delay: '3s' },
+  { size: 11, left: '5%', riseDur: '12s', wobbleDur: '3.9s', delay: '5s' },
+  { size: 8, left: '30%', riseDur: '10s', wobbleDur: '3.2s', delay: '6s' },
+  { size: 22, left: '48%', riseDur: '17s', wobbleDur: '5.5s', delay: '4.5s' },
+  { size: 7, left: '57%', riseDur: '8s', wobbleDur: '2.7s', delay: '7s' },
+  { size: 13, left: '72%', riseDur: '13s', wobbleDur: '4.1s', delay: '2.7s' },
+  { size: 28, left: '87%', riseDur: '18s', wobbleDur: '6.2s', delay: '1s' },
 ]
 function Bubbles() {
   return (
@@ -323,9 +324,9 @@ function Bubbles() {
 
 // ─── Scroll Section Progress (left sidebar) ───────────────────────
 const SECTIONS = [
-  { id: 'hero',     label: 'Home' },
+  { id: 'hero', label: 'Home' },
   { id: 'features', label: 'Features' },
-  { id: 'how',      label: 'How It Works' },
+  { id: 'how', label: 'How It Works' },
 ]
 function ScrollProgress() {
   const [active, setActive] = useState('hero')
@@ -354,7 +355,7 @@ function ScrollProgress() {
             )}
             <div
               className={`sp-dot ${isActive ? 'active' : ''}`}
-              onClick={() => document.getElementById(s.id)?.scrollIntoView({ behavior:'smooth' })}
+              onClick={() => document.getElementById(s.id)?.scrollIntoView({ behavior: 'smooth' })}
               title={s.label}
             />
             <span className={`sp-label ${isActive ? 'lit' : ''}`}>{s.label}</span>
@@ -367,15 +368,15 @@ function ScrollProgress() {
 
 
 // ─── Navbar ──────────────────────────────────────────
- function Navbar({ view, onNav }) {
-  const isLanding  = view === 'landing'
-  const isToolView = ['tool','loading','success','error'].includes(view)
+function Navbar({ view, onNav }) {
+  const isLanding = view === 'landing'
+  const isToolView = ['tool', 'loading', 'success', 'error'].includes(view)
   return (
     <nav className="navbar">
       <div className="container">
         <div className="navbar-inner">
-          <div className="navbar-logo" style={{ cursor:'pointer' }} onClick={() => onNav('landing')}>
-            <div className="logo-mark" style={{ display:'flex', alignItems:'center', justifyContent:'center', color:'#fff' }}>
+          <div className="navbar-logo" style={{ cursor: 'pointer' }} onClick={() => onNav('landing')}>
+            <div className="logo-mark" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
               {Icons.logo}
             </div>
             Agent Paperpal
@@ -383,8 +384,8 @@ function ScrollProgress() {
 
           <div className="navbar-links">
             {isLanding && <>
-              <button className="nav-link" onClick={() => document.getElementById('features')?.scrollIntoView({ behavior:'smooth' })}>Features</button>
-              <button className="nav-link" onClick={() => document.getElementById('how')?.scrollIntoView({ behavior:'smooth' })}>How It Works</button>
+              <button className="nav-link" onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })}>Features</button>
+              <button className="nav-link" onClick={() => document.getElementById('how')?.scrollIntoView({ behavior: 'smooth' })}>How It Works</button>
             </>}
             {isToolView && (
               <button className="nav-link" onClick={() => onNav('landing')}>← Home</button>
@@ -406,7 +407,7 @@ function ScrollProgress() {
 // ─── Landing Page ─────────────────────────────────────────────
 function Landing({ onGetStarted }) {
   const [featRef, featVis] = useVisible()
-  const [howRef, howVis]   = useVisible(0.2)
+  const [howRef, howVis] = useVisible(0.2)
   return (
     <>
       <ScrollProgress />
@@ -422,7 +423,7 @@ function Landing({ onGetStarted }) {
         <div className="hero-bg">
           <div className="grid-overlay" />
           <div className="hero-blob blob-orange" />
-          <div className="hero-blob blob-orange" style={{ animationDelay:'-4s', animationDuration:'12s', bottom:'-200px', top:'auto', right:'auto', left:'-200px', opacity:0.07 }} />
+          <div className="hero-blob blob-orange" style={{ animationDelay: '-4s', animationDuration: '12s', bottom: '-200px', top: 'auto', right: 'auto', left: '-200px', opacity: 0.07 }} />
           <Bubbles />
         </div>
         <div className="container">
@@ -443,7 +444,7 @@ function Landing({ onGetStarted }) {
               <button className="btn-cta-blue" onClick={onGetStarted}>
                 Get Started Free {Icons.arrow}
               </button>
-              <button className="btn-outline" onClick={() => document.getElementById('how')?.scrollIntoView({ behavior:'smooth' })}>
+              <button className="btn-outline" onClick={() => document.getElementById('how')?.scrollIntoView({ behavior: 'smooth' })}>
                 See How It Works
               </button>
             </div>
@@ -454,7 +455,7 @@ function Landing({ onGetStarted }) {
                   {Icons.check} APA 7th Edition
                 </div>
                 <div className="demo-lines">
-                  {[70,95,55,80,45].map((w, i) => <div key={i} className="demo-line" style={{ width:`${w}%` }} />)}
+                  {[70, 95, 55, 80, 45].map((w, i) => <div key={i} className="demo-line" style={{ width: `${w}%` }} />)}
                 </div>
               </div>
             </div>
@@ -467,7 +468,7 @@ function Landing({ onGetStarted }) {
         <div className="container">
           <div className="features-grid" ref={featRef}>
             {FEATURES.map((f, i) => (
-              <div key={f.title} className={`feature-card ${featVis ? 'visible' : ''}`} style={{ animationDelay:`${i*0.1}s` }}>
+              <div key={f.title} className={`feature-card ${featVis ? 'visible' : ''}`} style={{ animationDelay: `${i * 0.1}s` }}>
                 <div className={`feature-icon-wrap ${f.iconClass}`}>{f.icon}</div>
                 <h3>{f.title}</h3>
                 <p>{f.desc}</p>
@@ -485,10 +486,10 @@ function Landing({ onGetStarted }) {
           <p className="section-sub">No manual reformatting. No style guide hunting. Just upload and download.</p>
           <div className="steps-row" ref={howRef}>
             {STEPS.map((s, i) => (
-              <div key={s.title} className={`step ${howVis ? 'visible' : ''}`} style={{ animationDelay:`${i*0.18}s` }}>
+              <div key={s.title} className={`step ${howVis ? 'visible' : ''}`} style={{ animationDelay: `${i * 0.18}s` }}>
                 <div className="step-circle">
                   {s.icon}
-                  <span className="step-num-badge">{i+1}</span>
+                  <span className="step-num-badge">{i + 1}</span>
                 </div>
                 <h4>{s.title}</h4>
                 <p>{s.desc}</p>
@@ -505,47 +506,42 @@ function Landing({ onGetStarted }) {
 
 // ─── Journal metadata ─────────────────────────────────────────
 const JOURNAL_META = [
-  { id:'APA 7th Edition', label:'APA 7th Edition', updated:'Jan 2024' },
-  { id:'IEEE',            label:'IEEE',             updated:'Mar 2024' },
-  { id:'Vancouver',       label:'Vancouver',        updated:'Feb 2024' },
-  { id:'Springer',        label:'Springer',         updated:'Feb 2024' },
-  { id:'Chicago',         label:'Chicago',           updated:'Feb 2024' },
-]
-
-const MODES = [
-  { id: 'standard',    label: 'Standard',    desc: 'Apply predefined journal rules as-is' },
-  { id: 'semi_custom', label: 'Semi Custom', desc: 'Journal rules + your custom tweaks' },
-  { id: 'full_custom', label: 'Full Custom', desc: 'Upload your own guidelines document' },
+  { id: 'IEEE', label: 'IEEE', updated: 'Mar 2024' },
+  { id: 'APA 7th Edition', label: 'APA 7th Edition', updated: 'Jan 2024' },
+  { id: 'Springer', label: 'Springer', updated: 'Feb 2024' },
+  { id: 'Vancouver', label: 'Vancouver', updated: 'Feb 2024' },
+  { id: 'Chicago', label: 'Chicago', updated: 'Feb 2024' },
+  { id: 'Custom', label: 'Custom', updated: 'Full Customization' },
 ]
 
 // ─── Main App ──────────────────────────────────────────
 export default function App() {
   // View state
-  const [view,         setView]         = useState('landing')
+  const [view, setView] = useState('landing')
 
   // Upload state
-  const [file,         setFile]         = useState(null)
-  const [docId,        setDocId]        = useState(null)
-  const [uploadInfo,   setUploadInfo]   = useState(null) // { filename, word_count, char_count, file_type }
-  const [uploading,    setUploading]    = useState(false)
+  const [file, setFile] = useState(null)
+  const [docId, setDocId] = useState(null)
+  const [uploadInfo, setUploadInfo] = useState(null) // { filename, word_count, char_count, file_type }
+  const [uploading, setUploading] = useState(false)
 
   // Mode & config state
   const [selectedMode, setSelectedMode] = useState('standard')
-  const [journal,      setJournal]      = useState('')
-  const [overrides,    setOverrides]    = useState({})
+  const [journal, setJournal] = useState('')
+  const [overrides, setOverrides] = useState({})
   const [guidelineFile, setGuidelineFile] = useState(null)
-  const [customRules,   setCustomRules]   = useState(null)
-  const [extracting,    setExtracting]    = useState(false)
+  const [customRules, setCustomRules] = useState(null)
+  const [extracting, setExtracting] = useState(false)
 
   // Pipeline state
-  const [jobId,        setJobId]        = useState(null)
+  const [jobId, setJobId] = useState(null)
 
   // Results state
-  const [result,       setResult]       = useState(null)
-  const [error,        setError]        = useState('')
-  const [trustScore,   setTrustScore]   = useState(null)
-  const [downloading,  setDownloading]  = useState(false)
-  const [dlType,       setDlType]       = useState('doc')
+  const [result, setResult] = useState(null)
+  const [error, setError] = useState('')
+  const [trustScore, setTrustScore] = useState(null)
+  const [downloading, setDownloading] = useState(false)
+  const [dlType, setDlType] = useState('doc')
 
   // ── File upload → POST /upload ──────────────────────────────
   const handleFileSelect = async (f) => {
@@ -703,6 +699,8 @@ export default function App() {
       preview_url: data.preview_url || null,
       compliance_report: report,
       post_format_score: data.post_format_score || null,
+      document_structure: data.document_structure || null,
+      interpretation_results: data.interpretation_results || {},
     }
   }
 
@@ -710,18 +708,45 @@ export default function App() {
     if (!result?.download_url) return
     setDownloading(true); setDlType(type)
     try {
-      const url  = `${API}${result.download_url}${type === 'pdf' ? '?format=pdf' : ''}`
-      const res  = await axios.get(url, { responseType:'blob' })
+      const url = `${API}${result.download_url}${type === 'pdf' ? '?format=pdf' : ''}`
+      const res = await axios.get(url, { responseType: 'blob' })
       const mime = type === 'pdf'
         ? 'application/pdf'
         : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
       const blob = new Blob([res.data], { type: mime })
       const href = window.URL.createObjectURL(blob)
-      const a    = document.createElement('a')
+      const a = document.createElement('a')
       a.href = href; a.setAttribute('download', `formatted_paper.${type === 'pdf' ? 'pdf' : 'docx'}`)
       document.body.appendChild(a); a.click(); a.remove()
       window.URL.revokeObjectURL(href)
     } catch { alert('Download failed.') }
+    finally { setDownloading(false) }
+  }
+
+  // Download the edited version — sends HTML to backend for proper DOCX rebuild
+  const handleDownloadEdited = async (editedHtml, type = 'doc') => {
+    if (!editedHtml) return
+    setDownloading(true); setDlType(type)
+    try {
+      // Extract the original filepath from download_url (e.g. "/download/run_xxx/formatted.docx" → "run_xxx/formatted.docx")
+      const originalFilepath = result?.download_url?.replace('/download/', '') || ''
+      const res = await axios.post(`${API}/rebuild-docx`, {
+        html: editedHtml,
+        original_filepath: originalFilepath,
+        format: type === 'pdf' ? 'pdf' : 'docx',
+      }, { responseType: 'blob', timeout: 30000 })
+
+      const mime = type === 'pdf'
+        ? 'application/pdf'
+        : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      const ext = type === 'pdf' ? 'pdf' : 'docx'
+      const blob = new Blob([res.data], { type: mime })
+      const href = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = href; a.setAttribute('download', `edited_paper.${ext}`)
+      document.body.appendChild(a); a.click(); a.remove()
+      window.URL.revokeObjectURL(href)
+    } catch { alert('Download of edited document failed.') }
     finally { setDownloading(false) }
   }
 
@@ -739,7 +764,7 @@ export default function App() {
     } else setView(target)
   }
 
-  const isToolView = ['tool','pre-check','loading','success','error'].includes(view)
+  const isToolView = ['tool', 'pre-check', 'loading', 'success', 'error'].includes(view)
   const canSubmit = !!docId && !!journal && !uploading && !extracting
     && (selectedMode !== 'full_custom' || !!guidelineFile)
 
@@ -771,10 +796,10 @@ export default function App() {
 
               {/* Upload status indicator */}
               {uploading && (
-                <div style={{ textAlign:'center', padding:'12px 0', color:'var(--text-secondary)', fontSize:'0.85rem' }}>
-                  <div className="loading-orbit" style={{ width:28, height:28, margin:'0 auto 8px' }}>
-                    <div className="orbit-center" style={{ width:6, height:6 }} />
-                    <div className="orbit-dot" style={{ width:4, height:4 }} />
+                <div style={{ textAlign: 'center', padding: '12px 0', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                  <div className="loading-orbit" style={{ width: 28, height: 28, margin: '0 auto 8px' }}>
+                    <div className="orbit-center" style={{ width: 6, height: 6 }} />
+                    <div className="orbit-dot" style={{ width: 4, height: 4 }} />
                   </div>
                   Uploading and extracting text...
                 </div>
@@ -783,15 +808,15 @@ export default function App() {
               {/* Upload confirmation */}
               {uploadInfo && !uploading && (
                 <div style={{
-                  background:'var(--bg-soft)', border:'1.5px solid var(--success)',
-                  borderRadius:'var(--radius)', padding:'12px 16px', marginTop:8,
-                  display:'flex', alignItems:'center', justifyContent:'space-between', gap:12,
-                  fontSize:'0.85rem',
+                  background: 'var(--bg-soft)', border: '1.5px solid var(--success)',
+                  borderRadius: 'var(--radius)', padding: '12px 16px', marginTop: 8,
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+                  fontSize: '0.85rem',
                 }}>
-                  <span style={{ display:'flex', alignItems:'center', gap:8, color:'var(--success)' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--success)' }}>
                     {Icons.check} {uploadInfo.filename}
                   </span>
-                  <span style={{ color:'var(--text-secondary)' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>
                     {uploadInfo.word_count.toLocaleString()} words · {uploadInfo.file_type.toUpperCase()} · {uploadInfo.size_kb} KB
                   </span>
                 </div>
@@ -800,9 +825,9 @@ export default function App() {
               {/* Upload error */}
               {error && view === 'tool' && (
                 <div style={{
-                  background:'rgba(239,68,68,0.08)', border:'1.5px solid var(--error)',
-                  borderRadius:'var(--radius)', padding:'12px 16px', marginTop:8,
-                  fontSize:'0.85rem', color:'var(--error)',
+                  background: 'rgba(239,68,68,0.08)', border: '1.5px solid var(--error)',
+                  borderRadius: 'var(--radius)', padding: '12px 16px', marginTop: 8,
+                  fontSize: '0.85rem', color: 'var(--error)',
                 }}>
                   {error}
                 </div>
@@ -810,109 +835,97 @@ export default function App() {
 
               {/* Step 2: Journal Selection */}
               <div className="step-box">
-                <label className="form-label" style={{ marginBottom:12, display:'block' }}>Target Format</label>
-                {JOURNAL_META.map(j => (
-                  <label
-                    key={j.id}
-                    className={`journal-option-row ${journal === j.id ? 'selected' : ''}`}
-                    style={{ marginBottom:8 }}
-                  >
-                    <span style={{ display:'flex', alignItems:'center' }}>
-                      <input
-                        type="radio" name="journal" value={j.id}
-                        checked={journal === j.id}
-                        onChange={() => setJournal(j.id)}
-                      />
-                      <span className="journal-label">{j.label}</span>
-                    </span>
-                    {j.updated && (
-                      <span className="journal-updated">Updated {j.updated}</span>
-                    )}
-                  </label>
-                ))}
-              </div>
-
-              {/* Step 3: Mode Selection */}
-              {journal && (
-                <div className="step-box">
-                  <label className="form-label" style={{ marginBottom:12, display:'block' }}>Formatting Mode</label>
-                  <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-                    {MODES.map(m => (
-                      <button
-                        key={m.id}
-                        className={`yn-btn ${selectedMode === m.id ? 'selected' : ''}`}
-                        onClick={() => setSelectedMode(m.id)}
-                        style={{ flex:1, minWidth:130, textAlign:'center', padding:'10px 14px' }}
-                      >
-                        <div style={{ fontWeight:700, fontSize:'0.88rem' }}>{m.label}</div>
-                        <div style={{ fontSize:'0.72rem', color:'var(--text-secondary)', marginTop:2 }}>{m.desc}</div>
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Semi Custom: Structured override controls */}
-                  {selectedMode === 'semi_custom' && (
-                    <div style={{ marginTop:14 }}>
-                      <SemiCustomPanel
-                        journal={journal}
-                        overrides={overrides}
-                        onChange={setOverrides}
-                      />
-                    </div>
-                  )}
-
-                  {/* Full Custom: Guidelines PDF upload */}
-                  {selectedMode === 'full_custom' && (
-                    <div style={{ marginTop:14 }}>
-                      <label className="form-label" style={{ marginBottom:8, display:'block', fontSize:'0.85rem' }}>
-                        Upload Guidelines Document
-                      </label>
-                      <div
-                        style={{
-                          border:'2px dashed var(--border)', borderRadius:'var(--radius)',
-                          padding:'20px', textAlign:'center', cursor:'pointer',
-                          background: guidelineFile ? 'rgba(34,197,94,0.05)' : 'transparent',
-                          borderColor: guidelineFile ? 'var(--success)' : 'var(--border)',
-                        }}
-                        onClick={() => document.getElementById('guideline-upload')?.click()}
-                      >
+                <label className="form-label" style={{ marginBottom: 12, display: 'block' }}>Select Journal Style</label>
+                <div className="journal-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 }}>
+                  {JOURNAL_META.map(j => (
+                    <label
+                      key={j.id}
+                      className={`journal-card-row ${journal === j.id ? 'selected' : ''}`}
+                      style={{
+                        border: '1.5px solid var(--bg-soft)',
+                        padding: '12px',
+                        borderRadius: 'var(--radius-sm)',
+                        cursor: 'pointer',
+                        background: journal === j.id ? 'var(--blue-alpha)' : 'transparent',
+                        borderColor: journal === j.id ? 'var(--blue)' : 'var(--bg-soft)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <input
-                          id="guideline-upload"
-                          type="file"
-                          accept=".pdf,.docx,.txt"
-                          style={{ display:'none' }}
-                          onChange={(e) => {
-                            const f = e.target.files[0]
-                            if (f) setGuidelineFile(f)
+                          type="radio" name="journal" value={j.id}
+                          checked={journal === j.id}
+                          style={{ accentColor: 'var(--blue)' }}
+                          onChange={() => {
+                            setJournal(j.id)
+                            if (j.id === 'Custom') {
+                              setSelectedMode('full_custom')
+                            } else {
+                              setSelectedMode('standard')
+                            }
                           }}
                         />
-                        {guidelineFile ? (
-                          <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:8 }}>
-                            <span style={{ color:'var(--success)' }}>{Icons.check}</span>
-                            <span>{guidelineFile.name}</span>
-                            <button
-                              style={{ background:'none', border:'none', color:'var(--error)', cursor:'pointer', fontSize:'0.82rem' }}
-                              onClick={(e) => { e.stopPropagation(); setGuidelineFile(null) }}
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        ) : (
-                          <>
-                            <p style={{ margin:0, color:'var(--text-secondary)', fontSize:'0.85rem' }}>
-                              Drop your guidelines PDF/DOCX here, or click to browse
-                            </p>
-                            <div className="format-pills" style={{ marginTop:8, justifyContent:'center' }}>
-                              <span className="format-pill">PDF</span>
-                              <span className="format-pill">DOCX</span>
-                              <span className="format-pill">TXT</span>
-                            </div>
-                          </>
-                        )}
+                        <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{j.label}</span>
                       </div>
-                    </div>
-                  )}
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: 4, marginLeft: 24 }}>
+                        {j.id === 'Custom' ? 'Extraction via Guidelines PDF' : `Ref: ${j.updated}`}
+                      </div>
+                    </label>
+                  ))}
                 </div>
+              </div>
+
+              {/* Step 3: View-Specific Controls */}
+              {journal && (
+                journal === 'Custom' ? (
+                  /* FULL CUSTOM MODE */
+                  <div className="step-box animate-in">
+                    <label className="form-label" style={{ marginBottom: 12, display: 'block' }}>Upload Journal Guidelines (PDF)</label>
+                    <GuidelinesUpload
+                      file={guidelineFile}
+                      setFile={setGuidelineFile}
+                      extracting={extracting}
+                      onExtract={handleFormat}
+                    />
+                  </div>
+                ) : (
+                  /* STANDARD / SEMI CUSTOM MODE */
+                  <div className="step-box animate-in">
+                    <label className="form-label" style={{ marginBottom: 12, display: 'block' }}>Formatting Mode</label>
+                    <div style={{ display: 'flex', gap: 12 }}>
+                      {['standard', 'semi_custom'].map(m => (
+                        <button
+                          key={m}
+                          className={`yn-btn ${selectedMode === m ? 'selected' : ''}`}
+                          onClick={() => setSelectedMode(m)}
+                          style={{ flex: 1, padding: '16px', textAlign: 'left' }}
+                        >
+                          <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                            {m === 'standard' ? 'Standard' : 'Semi Custom'}
+                          </div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                            {m === 'standard'
+                              ? `Use defaults for ${journal}`
+                              : `Configure specific ${journal} rules`
+                            }
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+
+                    {selectedMode === 'semi_custom' && (
+                      <div style={{ marginTop: 24, paddingTop: 24, borderTop: '1px dashed var(--bg-soft)' }}>
+                        <SemiCustomPanel
+                          journal={journal}
+                          overrides={overrides}
+                          onChange={setOverrides}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )
               )}
 
               {/* Submit */}
@@ -920,7 +933,7 @@ export default function App() {
                 className="btn-primary"
                 onClick={handlePreCheck}
                 disabled={!canSubmit}
-                style={{ marginTop:24 }}
+                style={{ marginTop: 24 }}
               >
                 Check Compliance Score {Icons.arrow}
               </button>
@@ -950,7 +963,10 @@ export default function App() {
                 </p>
               </div>
             ) : (
-              <PreCheckGauge trustScore={trustScore} onFormat={handleFormat} onBack={() => setView('tool')} />
+              <PreCheckGauge trustScore={trustScore} onFormat={handleFormat} onBack={() => {
+                setTrustScore(null);
+                setView('tool');
+              }} />
             )}
           </div>
         </div>
@@ -973,6 +989,7 @@ export default function App() {
           result={result}
           trustScore={trustScore}
           onDownload={handleDownload}
+          onDownloadEdited={handleDownloadEdited}
           downloading={downloading}
           dlType={dlType}
           onReset={resetToTool}

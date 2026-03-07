@@ -1,35 +1,44 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import LiveDocumentEditor from './LiveDocumentEditor'
 
 const API = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
+
+// ── Edit icon ───────────────────────────────────────────────
+const IconEdit = () => (
+  <svg width="15" height="15" fill="none" viewBox="0 0 24 24">
+    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    <path d="M18.5 2.5a2.121 2.121 0 113 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
 
 // ── Icons ────────────────────────────────────────────────────
 const IconCheck = () => (
   <svg width="15" height="15" fill="none" viewBox="0 0 24 24">
-    <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+    <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 )
 const IconGear = () => (
   <svg width="15" height="15" fill="none" viewBox="0 0 24 24">
-    <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/>
-    <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" strokeWidth="1.5"/>
+    <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
+    <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" strokeWidth="1.5" />
   </svg>
 )
 const IconWarn = () => (
   <svg width="15" height="15" fill="none" viewBox="0 0 24 24">
-    <path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+    <path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 )
 const IconDownload = () => (
   <svg width="16" height="16" fill="none" viewBox="0 0 24 24">
-    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-    <polyline points="7 10 12 15 17 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-    <line x1="12" y1="15" x2="12" y2="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    <polyline points="7 10 12 15 17 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <line x1="12" y1="15" x2="12" y2="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
   </svg>
 )
 const IconFile = () => (
   <svg width="20" height="20" fill="none" viewBox="0 0 24 24">
-    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/>
-    <path d="M14 2v6h6M8 13h8M8 17h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+    <path d="M14 2v6h6M8 13h8M8 17h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
   </svg>
 )
 
@@ -60,7 +69,7 @@ function ScoreGauge({ score, label, size = 140 }) {
   return (
     <div className="rs-gauge">
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        <circle cx={center} cy={center} r={radius} fill="none" stroke="var(--border)" strokeWidth="8"/>
+        <circle cx={center} cy={center} r={radius} fill="none" stroke="var(--border)" strokeWidth="8" />
         <circle
           cx={center} cy={center} r={radius} fill="none"
           stroke={color} strokeWidth="8" strokeLinecap="round"
@@ -117,7 +126,7 @@ function DownloadDropdown({ onDownload, downloading, dlType }) {
         <IconDownload />
         {downloading ? `Downloading ${dlType === 'pdf' ? 'PDF' : 'DOCX'}...` : 'Download'}
         <svg width="10" height="10" viewBox="0 0 10 10" style={{ marginLeft: 4 }}>
-          <path d="M2 4l3 3 3-3" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+          <path d="M2 4l3 3 3-3" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" />
         </svg>
       </button>
       {open && (
@@ -135,9 +144,12 @@ function DownloadDropdown({ onDownload, downloading, dlType }) {
 }
 
 // ── Main Results Screen ──────────────────────────────────────
-export default function ResultsScreen({ result, trustScore, onDownload, downloading, dlType, onReset }) {
+export default function ResultsScreen({ result, trustScore, onDownload, onDownloadEdited, downloading, dlType, onReset }) {
   const [reportTab, setReportTab] = useState('done')
   const [mobileTab, setMobileTab] = useState('score') // mobile: 'preview' | 'score'
+  const [editing, setEditing] = useState(false)
+  const [hasEdits, setHasEdits] = useState(false)
+  const iframeRef = useRef(null)
 
   const report = result.compliance_report || {}
   const applied = report.applied_transformations || report.changes_made || []
@@ -151,14 +163,44 @@ export default function ResultsScreen({ result, trustScore, onDownload, download
   const totalChanges = applied.length + skipped.length + manual.length
   const autoPct = totalChanges > 0 ? Math.round((applied.length / totalChanges) * 100) : 100
 
+  // Toggle contenteditable in the iframe
+  const toggleEdit = useCallback(() => {
+    const newEditing = !editing
+    setEditing(newEditing)
+    if (iframeRef.current?.contentWindow) {
+      iframeRef.current.contentWindow.postMessage(
+        { type: 'SET_EDITABLE', editable: newEditing }, '*'
+      )
+    }
+    if (newEditing) setHasEdits(true)
+  }, [editing])
+
+  // Request edited HTML from iframe, then call parent's download handler
+  const handleDownloadEdited = useCallback((type = 'doc') => {
+    if (!iframeRef.current?.contentWindow) return
+
+    const handler = (e) => {
+      if (e.data?.type === 'EDITED_HTML') {
+        window.removeEventListener('message', handler)
+        onDownloadEdited(e.data.html, type)
+      }
+    }
+    window.addEventListener('message', handler)
+
+    iframeRef.current.contentWindow.postMessage({ type: 'GET_HTML' }, '*')
+
+    // Timeout cleanup
+    setTimeout(() => window.removeEventListener('message', handler), 5000)
+  }, [onDownloadEdited])
+
   const REPORT_TABS = [
-    { id: 'done',     label: 'Done',           icon: <IconCheck />, count: applied.length, color: 'rs-tab-green' },
-    { id: 'overrides', label: 'Your Overrides', icon: <IconGear />,  count: skipped.length, color: 'rs-tab-amber' },
-    { id: 'manual',   label: 'Manual Action',  icon: <IconWarn />,  count: manual.length,  color: 'rs-tab-red' },
+    { id: 'done', label: 'Done', icon: <IconCheck />, count: applied.length, color: 'rs-tab-green' },
+    { id: 'overrides', label: 'Your Overrides', icon: <IconGear />, count: skipped.length, color: 'rs-tab-amber' },
+    { id: 'manual', label: 'Manual Action', icon: <IconWarn />, count: manual.length, color: 'rs-tab-red' },
   ]
 
   const MOBILE_TABS = [
-    { id: 'score',   label: 'Compliance' },
+    { id: 'score', label: 'Compliance' },
     { id: 'preview', label: 'Preview' },
   ]
 
@@ -173,11 +215,25 @@ export default function ResultsScreen({ result, trustScore, onDownload, download
         <div className="rs-header-actions">
           <button className="rs-new-btn" onClick={onReset}>
             <svg width="15" height="15" fill="none" viewBox="0 0 24 24">
-              <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
+              <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
             </svg>
             New Paper
           </button>
-          <DownloadDropdown onDownload={onDownload} downloading={downloading} dlType={dlType} />
+          {result.preview_url && (
+            <button
+              className={`rs-edit-btn ${editing ? 'active' : ''}`}
+              onClick={toggleEdit}
+              title={editing ? 'Exit edit mode' : 'Edit document'}
+            >
+              <IconEdit />
+              {editing ? 'Stop Editing' : 'Edit'}
+            </button>
+          )}
+          {hasEdits ? (
+            <DownloadDropdown onDownload={handleDownloadEdited} downloading={downloading} dlType={dlType} />
+          ) : (
+            <DownloadDropdown onDownload={onDownload} downloading={downloading} dlType={dlType} />
+          )}
         </div>
       </div>
 
@@ -203,18 +259,24 @@ export default function ResultsScreen({ result, trustScore, onDownload, download
             <div className="rs-panel-header">
               <IconFile /> Formatted Preview
             </div>
-            <div className="rs-preview-frame">
+            <div className="rs-preview-frame" id="viewer-panel">
               {result.preview_url ? (
                 <iframe
+                  ref={iframeRef}
                   src={`${API}${result.preview_url}`}
                   className="rs-preview-iframe"
                   title="Formatted Paper Preview"
-                  sandbox="allow-same-origin"
+                  sandbox="allow-same-origin allow-scripts"
+                />
+              ) : result.document_structure ? (
+                <LiveDocumentEditor
+                  documentStructure={result.document_structure}
+                  violations={result.interpretation_results?.violations || []}
                 />
               ) : (
                 <div className="rs-preview-placeholder">
                   <div className="rs-preview-icon"><IconFile /></div>
-                  <p>Live preview will appear here when <code>preview_url</code> is returned by the backend.</p>
+                  <p>No preview available.</p>
                   <p className="rs-preview-hint">Download the DOCX to view your formatted paper.</p>
                 </div>
               )}
@@ -235,7 +297,7 @@ export default function ResultsScreen({ result, trustScore, onDownload, download
               {preScore !== null && postScore !== null && (
                 <div className="rs-score-arrow">
                   <svg width="24" height="24" fill="none" viewBox="0 0 24 24">
-                    <path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 </div>
               )}

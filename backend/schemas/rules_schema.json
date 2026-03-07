@@ -173,6 +173,12 @@
         },
         "H3": {
           "$ref": "#/$defs/heading"
+        },
+        "H4": {
+          "$ref": "#/$defs/heading"
+        },
+        "H5": {
+          "$ref": "#/$defs/heading"
         }
       }
     },
@@ -219,6 +225,66 @@
           ]
         },
         "format_three_plus": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "narrative_one": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "narrative_two": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "narrative_three_plus": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "same_author_same_year": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "multiple_sources": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "multiple_sort_order": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "no_date": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "in_press": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "page_number_quote": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "page_range_quote": {
           "type": [
             "string",
             "null"
@@ -285,6 +351,10 @@
         "space_between_entries": {
           "type": "boolean"
         },
+        "max_authors_before_et_al": {
+          "type": "number",
+          "minimum": 1
+        },
         "formats": {
           "type": "object",
           "required": [
@@ -294,7 +364,7 @@
             "website",
             "conference_paper"
           ],
-          "additionalProperties": false,
+          "additionalProperties": true,
           "properties": {
             "journal_article": {
               "type": "string"
@@ -303,6 +373,9 @@
               "type": "string"
             },
             "book_chapter": {
+              "type": "string"
+            },
+            "book_chapter_multiple_editors": {
               "type": "string"
             },
             "website": {
@@ -448,6 +521,100 @@
         }
       }
     },
+    "block_quotes": {
+      "type": "object",
+      "required": [
+        "threshold_words",
+        "left_indent",
+        "no_quotation_marks"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "threshold_words": {
+          "type": "number",
+          "minimum": 1
+        },
+        "left_indent": {
+          "type": "string"
+        },
+        "no_quotation_marks": {
+          "type": "boolean"
+        },
+        "apa_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "appendices": {
+      "type": "object",
+      "required": [
+        "label_format",
+        "label_centered",
+        "label_bold"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "label_format": {
+          "type": "string"
+        },
+        "label_centered": {
+          "type": "boolean"
+        },
+        "label_bold": {
+          "type": "boolean"
+        },
+        "title_centered": {
+          "type": "boolean"
+        },
+        "title_bold": {
+          "type": "boolean"
+        },
+        "apa_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "footnotes": {
+      "type": "object",
+      "required": [
+        "position",
+        "font_size",
+        "line_spacing"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "position": {
+          "type": "string"
+        },
+        "font_size": {
+          "type": "number"
+        },
+        "line_spacing": {
+          "type": "number"
+        },
+        "apa_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "statistical_notation": {
+      "type": "object",
+      "required": [
+        "italic_symbols"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "italic_symbols": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "apa_ref": {
+          "type": "string"
+        }
+      }
+    },
     "general_rules": {
       "type": "object",
       "required": [
@@ -493,9 +660,9 @@
         "bold",
         "italic",
         "centered",
-        "underline",
         "font_size"
       ],
+      "additionalProperties": true,
       "properties": {
         "bold": {
           "type": "boolean"
@@ -521,8 +688,20 @@
         "indent": {
           "type": "boolean"
         },
+        "indent_size": {
+          "type": "string"
+        },
         "inline_with_text": {
           "type": "boolean"
+        },
+        "period_after_heading": {
+          "type": "boolean"
+        },
+        "ends_with_period": {
+          "type": "boolean"
+        },
+        "apa_ref": {
+          "type": "string"
         }
       }
     }

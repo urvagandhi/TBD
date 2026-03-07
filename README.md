@@ -50,8 +50,11 @@ Agent Paperpal eliminates manual formatting effort through a multi-agent AI pipe
 | Multi-format input | Upload PDF or DOCX (up to 10 MB) |
 | 5 journal styles | APA 7th Edition, IEEE, Vancouver, Springer, Chicago 17th |
 | 4-agent AI pipeline | Sequential CrewAI agents; Transform agent runs inline violation scan (Phase A) + formatting (Phase B) |
-| Compliance scoring | 7-section breakdown (Document Format, Abstract, Headings, Citations, References, Figures, Tables) |
+| Compliance scoring | 7-section weighted breakdown (Document Format 18%, Abstract 12%, Headings 13%, Citations 22%, References 22%, Figures 6.5%, Tables 6.5%) |
+| Deterministic checks | 7 Python-exact checks override LLM scores: abstract word count, citation format, reference ordering, citation consistency, DOI format, et al. period, ampersand usage |
+| Figure & table extraction | Side-channel binary media extraction (PyMuPDF for PDF images, pdfplumber for PDF tables, python-docx for DOCX media) — bypasses LLM, injected at DOCX write time |
 | IMRAD detection | Checks for Introduction, Methods, Results, Discussion presence |
+| APA heading levels 1-5 | Full H1-H5 hierarchy with inline rendering for H3-H5 (heading + body text in same paragraph per APA §2.27) |
 | DOCX output | Formatted manuscript ready for download; in-place transformation for DOCX inputs |
 | Pipeline caching | SHA-256 keyed in-memory cache — identical submissions return instantly |
 | Async processing | Files >500KB processed as background jobs; poll `/status/{job_id}` for results |
@@ -158,7 +161,8 @@ Agent Paperpal uses a **layered architecture** with a clear separation between:
 | `tools/pdf_reader.py` | Extract text from PDF via PyMuPDF |
 | `tools/docx_reader.py` | Extract text from DOCX via python-docx |
 | `tools/text_chunker.py` | Split paper into IMRAD sections, compute word counts |
-| `tools/compliance_checker.py` | Deterministic compliance checks (Python-exact, overrides LLM scores) |
+| `tools/compliance_checker.py` | 7 deterministic compliance checks (Python-exact, overrides LLM scores) |
+| `tools/media_extractor.py` | Side-channel image/table extraction from PDF/DOCX source files |
 | `tools/rule_extractor.py` | Web-based journal rule extraction via BeautifulSoup |
 
 ---
@@ -179,6 +183,7 @@ Agent Paperpal uses a **layered architecture** with a clear separation between:
 | AI Model | Google Gemini | 2.5-flash | LLM for all 4 agents |
 | Document Processing | PyMuPDF (fitz) | 1.24.0 | PDF text extraction |
 | Document Processing | python-docx | 1.1.0 | DOCX read and write |
+| Document Processing | pdfplumber | >=0.10.0 | PDF table extraction |
 | Validation | jsonschema | >=4.0.0 | JSON schema validation |
 | Config | python-dotenv | >=1.0.0 | Environment variable management |
 
@@ -206,7 +211,8 @@ HACKa-MINed/
 │   │   ├── docx_writer.py          # Formatted DOCX generation (in-place + rebuild)
 │   │   ├── rule_loader.py          # Journal rules JSON loader + JOURNAL_MAP
 │   │   ├── text_chunker.py         # IMRAD section splitter + word count stats
-│   │   ├── compliance_checker.py   # Deterministic compliance checks (Python-exact)
+│   │   ├── compliance_checker.py   # 7 deterministic compliance checks (Python-exact)
+│   │   ├── media_extractor.py      # Side-channel image/table extraction (PDF/DOCX)
 │   │   ├── rule_extractor.py       # Web-based journal rule extraction (BeautifulSoup)
 │   │   ├── logger.py               # Structured logger factory (get_logger)
 │   │   └── tool_errors.py          # Custom exception hierarchy

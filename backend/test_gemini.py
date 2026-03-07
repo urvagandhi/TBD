@@ -1,12 +1,14 @@
-import vertexai
-from vertexai.generative_models import GenerativeModel
+import os
+import google.generativeai as genai
+from dotenv import load_dotenv
 
-vertexai.init(
-    project="project-b5ec2023-26c3-482a-99e",
-    location="us-central1"
+load_dotenv()
+
+genai.configure(
+    api_key=os.environ.get("GEMINI_API_KEY"),
 )
 
-model = GenerativeModel("ggemini-2.5-flash-lite")
+model = genai.GenerativeModel("gemini-3.1-flash-lite-preview")
 
 response = model.generate_content(
     "Explain IEEE citation format."

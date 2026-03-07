@@ -5,7 +5,7 @@ const API = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
 
 const IconCheck = () => (
   <svg width="12" height="12" fill="none" viewBox="0 0 24 24">
-    <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+    <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 )
 
@@ -47,6 +47,46 @@ const FIELDS = [
       { value: 1.5, label: '1.5' },
       { value: 2.0, label: 'Double (2.0)' },
     ],
+  },
+  {
+    key: 'document.alignment',
+    section: 'document', field: 'alignment',
+    label: 'Alignment',
+    type: 'select',
+    options: [
+      { value: 'left', label: 'Left' },
+      { value: 'justify', label: 'Justified' },
+      { value: 'center', label: 'Centered' },
+      { value: 'right', label: 'Right' },
+    ],
+  },
+  {
+    key: 'document.margins.top',
+    section: 'document', field: 'margins.top',
+    label: 'Margin Top',
+    type: 'select',
+    options: ['0.5in', '0.75in', '1in', '1.25in'].map(v => ({ value: v, label: v })),
+  },
+  {
+    key: 'document.margins.bottom',
+    section: 'document', field: 'margins.bottom',
+    label: 'Margin Bottom',
+    type: 'select',
+    options: ['0.5in', '0.75in', '1in', '1.25in'].map(v => ({ value: v, label: v })),
+  },
+  {
+    key: 'document.margins.left',
+    section: 'document', field: 'margins.left',
+    label: 'Margin Left',
+    type: 'select',
+    options: ['0.5in', '0.75in', '1in', '1.25in', '1.5in'].map(v => ({ value: v, label: v })),
+  },
+  {
+    key: 'document.margins.right',
+    section: 'document', field: 'margins.right',
+    label: 'Margin Right',
+    type: 'select',
+    options: ['0.5in', '0.75in', '1in', '1.25in', '1.5in'].map(v => ({ value: v, label: v })),
   },
   {
     key: 'headings.numbering_style',
@@ -138,6 +178,10 @@ export default function SemiCustomPanel({ journal, overrides, onChange }) {
   }
 
   const getCurrentValue = (fieldDef) => {
+    if (fieldDef.field.includes('.')) {
+      const [p1, p2] = fieldDef.field.split('.')
+      return overrides?.[fieldDef.section]?.[p1]?.[p2]
+    }
     return overrides?.[fieldDef.section]?.[fieldDef.field]
   }
 
@@ -160,15 +204,22 @@ export default function SemiCustomPanel({ journal, overrides, onChange }) {
       }
     } else {
       if (!next[fieldDef.section]) next[fieldDef.section] = {}
-      // Coerce types
-      if (fieldDef.type === 'number') {
-        next[fieldDef.section][fieldDef.field] = parseInt(value, 10)
-      } else if (fieldDef.key === 'document.font_size') {
-        next[fieldDef.section][fieldDef.field] = parseInt(value, 10)
-      } else if (fieldDef.key === 'document.line_spacing') {
-        next[fieldDef.section][fieldDef.field] = parseFloat(value)
+
+      if (fieldDef.field.includes('.')) {
+        const [p1, p2] = fieldDef.field.split('.')
+        if (!next[fieldDef.section][p1]) next[fieldDef.section][p1] = {}
+        next[fieldDef.section][p1][p2] = value
       } else {
-        next[fieldDef.section][fieldDef.field] = value
+        // Coerce types
+        if (fieldDef.type === 'number') {
+          next[fieldDef.section][fieldDef.field] = parseInt(value, 10)
+        } else if (fieldDef.key === 'document.font_size') {
+          next[fieldDef.section][fieldDef.field] = parseInt(value, 10)
+        } else if (fieldDef.key === 'document.line_spacing') {
+          next[fieldDef.section][fieldDef.field] = parseFloat(value)
+        } else {
+          next[fieldDef.section][fieldDef.field] = value
+        }
       }
     }
 

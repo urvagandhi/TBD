@@ -22,8 +22,12 @@ from agents import (
 from agents.validate_agent import SECTION_WEIGHTS
 from tools.compliance_checker import apply_deterministic_checks, run_deterministic_checks
 from tools.docx_reader import extract_docx_text
-from tools.docx_writer import build_apa_docx, build_ieee_docx, transform_docx_in_place, write_formatted_docx
+from tools.docx_writer import (
+    build_apa_docx, build_chicago_docx, build_ieee_docx, build_springer_docx,
+    build_vancouver_docx, transform_docx_in_place, write_formatted_docx,
+)
 from tools.logger import get_logger
+from tools.media_extractor import extract_all_media, map_figures_to_images, map_tables_to_captions
 from tools.pre_format_scorer import score_pre_format
 from tools.rule_loader import load_rules
 from tools.tool_errors import (
@@ -778,7 +782,7 @@ def _validate_task_outputs(crew: Crew) -> str:
     return run_id
 
 
-def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optional[str] = None, rules_override: Optional[dict] = None, progress_callback=None) -> dict:
+def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optional[str] = None, rules_override: Optional[dict] = None, progress_callback=None, source_file_path: Optional[str] = None) -> dict:
     """
     Execute the 5-agent CrewAI sequential pipeline.
 
@@ -833,7 +837,7 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
     # LiteLLM (used internally by CrewAI) reads GOOGLE_API_KEY for Google AI Studio
     os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
 
-    model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+    model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     llm_timeout = int(os.getenv("LLM_TIMEOUT", "300"))
 
     # Use high max_tokens to prevent truncation — Gemini Flash uses
@@ -869,6 +873,23 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
         "[PIPELINE] Section-aware context built — %d sections detected: %s",
         len(section_stats), list(section_stats.keys()),
     )
+
+    # ── Media extraction — side-channel for images & tables (bypasses LLM) ──
+    # Determine source file path: prefer explicit param, fall back to source_docx_path
+    _media_source = source_file_path or source_docx_path
+    media_data: dict = {"source_type": "unknown", "raw_images": [], "raw_tables": []}
+    if _media_source and Path(_media_source).exists():
+        try:
+            media_data = extract_all_media(_media_source)
+            logger.info(
+                "[PIPELINE] Media extracted — %d images, %d tables from %s (%s)",
+                len(media_data["raw_images"]), len(media_data["raw_tables"]),
+                Path(_media_source).name, media_data["source_type"],
+            )
+        except Exception as _media_err:
+            logger.warning("[PIPELINE] Media extraction failed (non-fatal): %s", _media_err)
+    else:
+        logger.info("[PIPELINE] No source file for media extraction — figures/tables will use placeholders")
 
     from agents.transform_agent import detect_style
     style_key = detect_style(journal_style)  # "apa" | "ieee" | "generic"
@@ -969,6 +990,79 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
             "(with format_id='apa7', font_size_halfpoints=24, line_spacing_twips=480, "
             "body_first_line_indent_dxa=720, sections: [title_page, abstract_page, body, references_page])."
         )
+    elif style_key == "springer":
+        _cit_rules = rules.get("citations", {})
+        _ref_rules = rules.get("references", {})
+        _doc_rules = rules.get("document", {})
+        _transform_specifics = (
+            f"CRITICAL REQUIREMENTS FOR Springer Nature (sn-mathphys-ay):\n"
+            f"1. Citation format: {_cit_rules.get('style', 'author-date')} "
+            f"— brackets: {_cit_rules.get('brackets', 'parentheses')}\n"
+            f"   Apply to ALL inline citations. Use 'and' for two authors, 'et al.' for 3+.\n"
+            f"2. Reference ordering: {_ref_rules.get('ordering', 'alphabetical')}\n"
+            f"3. Reference style: follow the format templates in the rules JSON exactly.\n"
+            f"4. Hanging indent: {_ref_rules.get('hanging_indent', True)}\n"
+            f"5. Document: font={_doc_rules.get('font', 'Times New Roman')}, "
+            f"size={_doc_rules.get('font_size', 10)}pt, "
+            f"spacing={_doc_rules.get('line_spacing', 1.0)}, "
+            f"alignment={_doc_rules.get('alignment', 'justify')}\n"
+            f"6. Headings MUST be hierarchically numbered (1, 1.1, 1.1.1).\n"
+            f"7. Generate docx_instructions with a FLAT sections array containing:\n"
+            f"   types: title, authors, affiliations, abstract, keywords, heading, "
+            f"paragraph, reference, figure_caption, table_caption\n"
+            f"   Each section has: type, content, and relevant formatting flags\n"
+            f"8. ALL citation/reference changes must be applied INLINE in body text. "
+            f"ZERO numbered citations should remain.\n\n"
+        )
+        _transform_expected = (
+            "Valid JSON with: format_applied, violations, changes_made, citation_replacements, "
+            "reference_conversions, reference_order, docx_instructions "
+            "(with flat sections array: [title, authors, affiliations, abstract, keywords, heading, paragraph, reference...])."
+        )
+    elif style_key == "chicago":
+        _transform_specifics = (
+            f"CRITICAL REQUIREMENTS FOR Chicago Manual of Style (17th Edition, Author-Date):\n"
+            f"1. Citation format: (Author Year) format. Use 'and' for two authors, italic 'et al.' for 3+.\n"
+            f"   Apply to ALL inline citations. Multiple citations separated by semicolons.\n"
+            f"2. Reference ordering: alphabetical by author surname.\n"
+            f"3. Reference style: follow the format exactly (Author. Year. Title. etc).\n"
+            f"4. Hanging indent: True (0.5 inch).\n"
+            f"5. Document: font=Times New Roman, size=12pt, spacing=2.0 (Double), alignment=left.\n"
+            f"6. Headings MUST be un-numbered. H1 Center/Bold/Title Case. H2 Left/Title Case. H3 Left/Italic.\n"
+            f"7. Generate docx_instructions with a FLAT sections array containing:\n"
+            f"   types: title, authors, affiliations, abstract, keywords, heading, "
+            f"paragraph, reference, figure_caption, table_caption\n"
+            f"   Each section has: type, content, and relevant formatting flags\n"
+            f"8. ALL citation/reference changes must be applied INLINE in body text. "
+            f"ZERO numbered citations should remain.\n\n"
+        )
+        _transform_expected = (
+            "Valid JSON with: format_applied, violations, changes_made, citation_replacements, "
+            "reference_conversions, reference_order, docx_instructions "
+            "(with flat sections array: [title, authors, affiliations, abstract, keywords, heading, paragraph, reference...])."
+        )
+    elif style_key == "vancouver":
+        _transform_specifics = (
+            f"CRITICAL REQUIREMENTS FOR Vancouver (ICMJE / Biomedical):\n"
+            f"1. Citation format: Numbered style [1]. Ordered by first appearance in text.\n"
+            f"   Apply to ALL inline citations. Multiple citations separated by commas [1,3,5]. Ranges [2-4].\n"
+            f"2. Reference ordering: Numerically by citation appearance.\n"
+            f"3. Reference style: follow the format exactly (Author AA. Title. Journal. Year;Vol(Iss):Pages.).\n"
+            f"4. Hanging indent: True (0.5 inch).\n"
+            f"5. Document: font=Times New Roman, size=12pt, spacing=2.0 (Double), alignment=left.\n"
+            f"6. Headings MUST be structured (Introduction, Methods, Results, Discussion). H1 Bold/Upper. H2 Title Case/Bold. H3 Title Case/Italic.\n"
+            f"7. Generate docx_instructions with a FLAT sections array containing:\n"
+            f"   types: title, authors, affiliations, abstract, keywords, heading, "
+            f"paragraph, reference, figure_caption, table_caption\n"
+            f"   Each section has: type, content, and relevant formatting flags\n"
+            f"8. ALL citation/reference changes must be applied INLINE in body text. "
+            f"Author formatting must be Surname Initials.\n\n"
+        )
+        _transform_expected = (
+            "Valid JSON with: format_applied, violations, changes_made, citation_replacements, "
+            "reference_conversions, reference_order, docx_instructions "
+            "(with flat sections array: [title, authors, affiliations, abstract, keywords, heading, paragraph, reference...])."
+        )
     else:
         _cit_rules = rules.get("citations", {})
         _ref_rules = rules.get("references", {})
@@ -1066,6 +1160,28 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
             f"6. Abstract (10%): ≤250 words, bold centered label, no first-line indent, keywords with italic label.\n"
             f"7. Figures (7.5%) & Tables (7.5%): 'Figure N' not 'Fig.', sequential numbering, label bold, caption italic.\n\n"
         )
+    elif style_key == "springer":
+        _validate_checks = (
+            f"Perform ALL 7 compliance checks against Springer Nature (sn-mathphys-ay) rules:\n"
+            f"1. Citations (25%): ALL must be (Author Year) format. -10 per numbered citation remaining.\n"
+            f"2. References (25%): Alphabetical order. Surname Initials (Year). Hanging indent. -10 per missing field.\n"
+            f"3. Citation ↔ Reference consistency: every citation has a reference, every reference is cited.\n"
+            f"4. Headings (15%): Numeric hierarchy required (1, 1.1, 1.1.1). H1/H2 bold, H3 italic.\n"
+            f"5. Front Matter (10%): Check for structured affiliations (Department, Organization...) and author initials.\n"
+            f"6. Abstract & Keywords (10%): Abstract label bold, justified body. Keywords label bold.\n"
+            f"7. Figures & Tables (15%): 'Fig. N' below (Bold). 'Table N' above (Bold).\n\n"
+        )
+    elif style_key == "chicago":
+        _validate_checks = (
+            f"Perform ALL 7 compliance checks against Chicago Manual of Style (Author-Date):\n"
+            f"1. Citations (25%): ALL must be (Author Year) format without commas between author & year. -10 per error.\n"
+            f"2. References (25%): Alphabetical order. Correct punctuation (periods). Hanging indent 0.5in.\n"
+            f"3. Citation ↔ Reference consistency: every citation has a reference, every reference is cited.\n"
+            f"4. Headings (15%): Un-numbered hierarchy. H1 Centered/Bold. H2 Left. H3 Left/Italic.\n"
+            f"5. Document format (10%): Times New Roman 12pt. Double spaced (2.0). Left aligned. First line indent 0.5in.\n"
+            f"6. Abstract (10%): Label Centered/Not bold. Paragraph indented.\n"
+            f"7. Figures & Tables (15%): Figures below, left aligned. Tables above, minimal borders.\n\n"
+        )
     else:
         _cit_rules = rules.get("citations", {})
         _ref_rules = rules.get("references", {})
@@ -1148,8 +1264,6 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
                 raise
 
     logger.info("[PIPELINE] All steps complete — parsing outputs...")
-
-    # Parse all task outputs ONCE and reuse throughout
     parse_raw = _get_task_output(crew, task_index=1)
     transform_raw = _get_task_output(crew, task_index=2)
     transform_data = extract_json_from_llm(transform_raw)
@@ -1157,6 +1271,27 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
     compliance_report = _parse_compliance_report(raw_output)
     overall_score = compliance_report.get("overall_score", "N/A")
     logger.info("[PIPELINE] Compliance report parsed — overall_score=%s", overall_score)
+
+    # ── Map extracted media to figure/table captions from PARSE output ─────────
+    image_store: dict = {}
+    table_store: dict = {}
+    try:
+        _parse_data = extract_json_from_llm(parse_raw)
+        figure_captions = _parse_data.get("figures", [])
+        table_captions = _parse_data.get("tables", [])
+        if media_data["raw_images"] or media_data["raw_tables"]:
+            image_store = map_figures_to_images(
+                media_data["raw_images"], figure_captions, media_data["source_type"],
+            )
+            table_store = map_tables_to_captions(
+                media_data["raw_tables"], table_captions, media_data["source_type"],
+            )
+            logger.info(
+                "[PIPELINE] Media mapped — %d figures, %d tables",
+                len(image_store), len(table_store),
+            )
+    except Exception as _map_err:
+        logger.warning("[PIPELINE] Media mapping failed (non-fatal): %s", _map_err)
 
     # ── Deterministic overrides — replace LLM scores with Python-computed facts ──
     try:
@@ -1186,14 +1321,35 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
         # Violations (PHASE A)
         _violations = _transform_data_preview.get("violations", [])
         if isinstance(_violations, list):
+            structured_violations = []
+            for i, v in enumerate(_violations):
+                if not isinstance(v, dict):
+                    v = {"text": str(v), "message": str(v)}
+                
+                v_text = v.get("text", v.get("current", ""))
+                start_char = paper_content.find(v_text) if v_text else -1
+                end_char = start_char + len(v_text) if start_char != -1 else -1
+
+                structured_violations.append({
+                    "id": f"v{i+1}",
+                    "element": v.get("element", ""),
+                    "text": v_text,
+                    "start_char": start_char,
+                    "end_char": end_char,
+                    "message": v.get("message", "Formatting violation"),
+                    "expected": v.get("expected", v.get("required", "")),
+                    "rule_reference": v.get("rule_reference", v.get("apa_ref", "")),
+                    "severity": v.get("severity", "medium")
+                })
+            
             interpretation_results = {
-                "violations": _violations,
-                "total_violations": len(_violations),
+                "violations": structured_violations,
+                "total_violations": len(structured_violations),
                 "journal": journal_style,
             }
             logger.info(
                 "[PIPELINE] Interpretation results extracted — %d violations surfaced",
-                len(_violations),
+                len(structured_violations),
             )
 
         # Changes made (PHASE B) — enrich with rule references
@@ -1210,7 +1366,10 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
     logger.info("[PIPELINE] Writing formatted DOCX (source_docx=%s)...",
                 "in-place" if source_docx_path else "from-text")
     t0 = time.time()
-    docx_filename = _write_docx_from_transform(transform_raw, rules, source_docx_path, paper_content, style_key, run_id=run_id)
+    docx_filename = _write_docx_from_transform(
+        transform_raw, rules, source_docx_path, paper_content, style_key,
+        run_id=run_id, image_store=image_store, table_store=table_store,
+    )
     logger.info("[PIPELINE] DOCX written — file=%s in %.2fs", docx_filename, time.time() - t0)
 
     total_elapsed = round(time.time() - pipeline_start, 1)
@@ -1252,6 +1411,15 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
         overall_score, docx_filename, output_metadata["size_kb"], total_elapsed,
     )
 
+    # ── Extract parsed structure for the Live Document Editor  ───────────────
+    document_structure = {}
+    try:
+        parse_raw = _get_task_output(crew, task_index=1)
+        document_structure = extract_json_from_llm(parse_raw)
+        logger.info("[PIPELINE] Extracted parsed document structure from Agent 2")
+    except Exception as e:
+        logger.warning("[PIPELINE] Could not extract parsed document structure: %s", e)
+
     pipeline_result = {
         "compliance_report": compliance_report,
         "docx_filename": docx_filename,
@@ -1261,6 +1429,7 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
         "changes_made": enriched_changes,  # Rule-referenced, from transform PHASE B
         "post_format_score": post_format_score,
         "formatting_report": formatting_report,
+        "document_structure": document_structure,
     }
 
     # Improvement 7: Cache for instant re-runs of identical submissions
@@ -1517,6 +1686,33 @@ def _normalize_section_types(sections: list) -> list:
     return normalized
 
 
+def _save_paragraph_map(docx_path: str) -> None:
+    """
+    Save a JSON paragraph map alongside the DOCX for surgical editing.
+    Maps each paragraph index to its text, style, and run-level formatting
+    so /rebuild-docx can diff and patch without going through mammoth.
+    """
+    try:
+        from docx import Document as _Doc
+        doc = _Doc(docx_path)
+        para_map = []
+        for i, para in enumerate(doc.paragraphs):
+            text = para.text
+            if not text.strip():
+                continue
+            para_map.append({
+                "index": i,
+                "text": text,
+                "style": para.style.name if para.style else "Normal",
+            })
+        map_path = docx_path.replace(".docx", "_paramap.json")
+        with open(map_path, "w", encoding="utf-8") as f:
+            json.dump(para_map, f, ensure_ascii=False)
+        logger.info("[PARAMAP] Saved %d paragraphs → %s", len(para_map), map_path)
+    except Exception as e:
+        logger.warning("[PARAMAP] Failed to save paragraph map: %s", e)
+
+
 def _write_docx_from_transform(
     transform_raw: str,
     rules: dict,
@@ -1524,14 +1720,19 @@ def _write_docx_from_transform(
     paper_content: Optional[str] = None,
     style_key: str = "generic",
     run_id: Optional[str] = None,
+    image_store: Optional[dict] = None,
+    table_store: Optional[dict] = None,
 ) -> str:
     """
     Extract transform output and write the formatted DOCX file.
 
     Routes to the appropriate builder based on style_key:
-      - "apa"     → build_apa_docx()    (page-based sections)
-      - "ieee"    → build_ieee_docx()   (flat sections, 2-column, 10pt)
-      - "generic" → write_formatted_docx() (rules-driven fallback)
+      - "apa"       → build_apa_docx()       (page-based sections)
+      - "ieee"      → build_ieee_docx()      (flat sections, 2-column, 10pt)
+      - "springer"  → build_springer_docx()  (10pt, single spacing, justified)
+      - "chicago"   → build_chicago_docx()   (12pt, double spacing, left-aligned)
+      - "vancouver" → build_vancouver_docx() (12pt, double spacing, numbered citations)
+      - "generic"   → write_formatted_docx() (rules-driven fallback)
 
     For DOCX source files with non-APA styles, may use transform_docx_in_place()
     to preserve figures, tables, and embedded objects.
@@ -1568,7 +1769,8 @@ def _write_docx_from_transform(
             )
         logger.info("[DOCX] APA format — using build_apa_docx — %d sections → %s",
                     len(sections), output_filename)
-        build_apa_docx(transform_data, output_path)
+        build_apa_docx(transform_data, output_path, image_store=image_store, table_store=table_store)
+        _save_paragraph_map(output_path)
         return output_filename
 
     # ── Path B: IEEE → build_ieee_docx (flat sections, 2-column, 10pt) ──
@@ -1591,18 +1793,86 @@ def _write_docx_from_transform(
         docx_instructions["rules"] = rules
         logger.info("[DOCX] IEEE format — using build_ieee_docx — %d sections → %s",
                     len(docx_instructions["sections"]), output_filename)
-        build_ieee_docx(docx_instructions, output_path)
+        build_ieee_docx(docx_instructions, output_path, image_store=image_store, table_store=table_store)
+        _save_paragraph_map(output_path)
         return output_filename
 
-    # ── Path C: DOCX source with in-place transformation (preserves figures/tables) ──
+    # ── Path C: Springer → build_springer_docx (10pt, single spacing, justified) ──
+    if style_key == "springer":
+        if not isinstance(sections, list) or not sections:
+            raise TransformError(
+                "Springer docx_instructions missing 'sections' list. "
+                f"Keys: {list(docx_instructions.keys()) if isinstance(docx_instructions, dict) else '(not a dict)'}"
+            )
+        docx_instructions = _normalize_docx_instructions(docx_instructions)
+        _validate_docx_instructions(docx_instructions)
+        sections = _guard_section_contents(sections, paper_content)
+        if not sections:
+            raise TransformError(
+                "All sections were empty after content guard — transform agent produced no usable content."
+            )
+        docx_instructions["sections"] = _normalize_section_types(sections)
+        docx_instructions["rules"] = rules
+        logger.info("[DOCX] Springer format — using build_springer_docx — %d sections → %s",
+                    len(docx_instructions["sections"]), output_filename)
+        build_springer_docx(docx_instructions, output_path, image_store=image_store, table_store=table_store)
+        _save_paragraph_map(output_path)
+        return output_filename
+
+    # ── Path D: Chicago → build_chicago_docx (12pt, double spacing, left-aligned) ──
+    if style_key == "chicago":
+        if not isinstance(sections, list) or not sections:
+            raise TransformError(
+                "Chicago docx_instructions missing 'sections' list. "
+                f"Keys: {list(docx_instructions.keys()) if isinstance(docx_instructions, dict) else '(not a dict)'}"
+            )
+        docx_instructions = _normalize_docx_instructions(docx_instructions)
+        _validate_docx_instructions(docx_instructions)
+        sections = _guard_section_contents(sections, paper_content)
+        if not sections:
+            raise TransformError(
+                "All sections were empty after content guard — transform agent produced no usable content."
+            )
+        docx_instructions["sections"] = _normalize_section_types(sections)
+        docx_instructions["rules"] = rules
+        logger.info("[DOCX] Chicago format — using build_chicago_docx — %d sections → %s",
+                    len(docx_instructions["sections"]), output_filename)
+        build_chicago_docx(docx_instructions, output_path, image_store=image_store, table_store=table_store)
+        _save_paragraph_map(output_path)
+        return output_filename
+
+    # ── Path E: Vancouver → build_vancouver_docx (12pt, double spacing, numbered citations) ──
+    if style_key == "vancouver":
+        if not isinstance(sections, list) or not sections:
+            raise TransformError(
+                "Vancouver docx_instructions missing 'sections' list. "
+                f"Keys: {list(docx_instructions.keys()) if isinstance(docx_instructions, dict) else '(not a dict)'}"
+            )
+        docx_instructions = _normalize_docx_instructions(docx_instructions)
+        _validate_docx_instructions(docx_instructions)
+        sections = _guard_section_contents(sections, paper_content)
+        if not sections:
+            raise TransformError(
+                "All sections were empty after content guard — transform agent produced no usable content."
+            )
+        docx_instructions["sections"] = _normalize_section_types(sections)
+        docx_instructions["rules"] = rules
+        logger.info("[DOCX] Vancouver format — using build_vancouver_docx — %d sections → %s",
+                    len(docx_instructions["sections"]), output_filename)
+        build_vancouver_docx(docx_instructions, output_path, image_store=image_store, table_store=table_store)
+        _save_paragraph_map(output_path)
+        return output_filename
+
+    # ── Path F: DOCX source with in-place transformation (preserves figures/tables) ──
     # Only used for generic styles where preserving original DOCX structure matters.
     if source_docx_path and Path(source_docx_path).exists():
         logger.info("[DOCX] In-place transformation (style=%s) — source=%s → %s",
                     style_key, Path(source_docx_path).name, output_filename)
         transform_docx_in_place(source_docx_path, transform_data, rules, output_path)
+        _save_paragraph_map(output_path)
         return output_filename
 
-    # ── Path D: Generic PDF/TXT source — rebuild from extracted text ──
+    # ── Path G: Generic PDF/TXT source — rebuild from extracted text ──
     if not isinstance(sections, list) or len(sections) == 0:
         raise TransformError(
             "docx_instructions is missing a non-empty 'sections' list. "
@@ -1622,5 +1892,6 @@ def _write_docx_from_transform(
     docx_instructions["rules"] = rules
     logger.info("[DOCX] Generic format — using write_formatted_docx — %d sections → %s",
                 len(docx_instructions["sections"]), output_filename)
-    write_formatted_docx(docx_instructions, output_path)
+    write_formatted_docx(docx_instructions, output_path, image_store=image_store, table_store=table_store)
+    _save_paragraph_map(output_path)
     return output_filename

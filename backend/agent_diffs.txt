@@ -1,0 +1,442 @@
+
+--- DIFF FOR ingest_agent.py ---
+--- old\old_ingest_agent.py
+
++++ agents\ingest_agent.py
+
+@@ -29,0 +30,7 @@
+
++    "[HEADING_H4:<text>]",
+
++    "[HEADING_H5:<text>]",
+
++    "[PARA_START]", "[PARA_END]",
+
++    "[BLOCK_QUOTE_START]", "[BLOCK_QUOTE_END]",
+
++    "[FOOTNOTE_START:<N>]", "[FOOTNOTE_END:<N>]",
+
++    "[APPENDIX_START:<A>]", "[APPENDIX_END:<A>]",
+
++    "[APPENDIX_TITLE_START]", "[APPENDIX_TITLE_END]",
+
+@@ -46 +53 @@
+
+-    r"|HEADING_H[123]:[^\]]+|FIGURE_CAPTION_(?:START|END):[^\]]+"
+
++    r"|HEADING_H[12345]:[^\]]+|FIGURE_CAPTION_(?:START|END):[^\]]+"
+
+@@ -47,0 +55,5 @@
+
++    r"|PARA_START|PARA_END"
+
++    r"|BLOCK_QUOTE_START|BLOCK_QUOTE_END"
+
++    r"|FOOTNOTE_(?:START|END):[^\]]+"
+
++    r"|APPENDIX_(?:START|END):[^\]]+"
+
++    r"|APPENDIX_TITLE_START|APPENDIX_TITLE_END"
+
+@@ -112,0 +125,23 @@
+
++
+
++[HEADING_H4:Exact Heading Text]
+
++  - Level 4 sub-sub-subsection headings (very rare). Bold, indented, inline with text.
+
++
+
++[HEADING_H5:Exact Heading Text]
+
++  - Level 5 headings (very rare). Bold italic, indented, inline with text.
+
++
+
++[PARA_START]...[PARA_END]
+
++  - Wrap each body paragraph with these labels.
+
++  - This allows downstream agents to preserve paragraph boundaries in multi-paragraph sections.
+
++
+
++[BLOCK_QUOTE_START]...[BLOCK_QUOTE_END]
+
++  - Long quotations (40+ words) that are set apart from the text.
+
++  - These get different indentation treatment in APA format.
+
++
+
++[FOOTNOTE_START:N]...[FOOTNOTE_END:N]
+
++  - Footnote text. N = footnote number.
+
++  - May appear at bottom of pages or end of paper.
+
++
+
++[APPENDIX_START:A]...[APPENDIX_END:A]
+
++  - Appendix sections. A = appendix letter (A, B, C...).
+
++  - Include the appendix title within:
+
++  [APPENDIX_TITLE_START]Appendix Title[APPENDIX_TITLE_END]
+
+@@ -151,0 +187,6 @@
+
++## CITATION RANGE PRESERVATION RULE
+
++
+
++For citation ranges like (9-12), preserve the range format EXACTLY as-is in the [CITATION:] label.
+
++Do NOT expand them. Example: [CITATION:(9-12)]
+
++The TRANSFORM agent will expand ranges using the reference list.
+
++
+
+@@ -157,0 +199,6 @@
+
++
+
++A new paragraph starts when:
+
++  (a) there is a blank line in the extracted text, OR
+
++  (b) the next line begins with 4+ spaces of indentation, OR
+
++  (c) the next line begins a new sentence after a heading.
+
++A line break within a sentence is a PDF wrapping artifact — merge it.
+
+@@ -198,2 +245,2 @@
+
+-        max_tokens=16384,
+
+-    )
++        max_tokens=65536,
+
++    )
+
+--- DIFF FOR interpret_agent.py ---
+--- old\old_interpret_agent.py
+
++++ agents\interpret_agent.py
+
+@@ -190 +190 @@
+
+-    )
++    )
+
+--- DIFF FOR parse_agent.py ---
+--- old\old_parse_agebt.py
+
++++ agents\parse_agent.py
+
+@@ -105 +105,6 @@
+
+-      "content": "Full section body text. Merge all paragraphs belonging to this section.",
+
++      "content": "Full section body text as a single string (for backward compatibility).",
+
++      "paragraphs": [
+
++        {"index": 1, "text": "First paragraph text.", "type": "body"},
+
++        {"index": 2, "text": "Second paragraph text.", "type": "body"},
+
++        {"index": 3, "text": "Long quoted passage...", "type": "block_quote"}
+
++      ],
+
+@@ -110 +115,4 @@
+
+-          "content": "Subsection body text"
+
++          "content": "Subsection body text",
+
++          "paragraphs": [
+
++            {"index": 1, "text": "Paragraph text.", "type": "body"}
+
++          ]
+
+@@ -131,0 +140,3 @@
+
++      "section_heading": "Introduction",
+
++      "paragraph_index": 1,
+
++      "citation_type": "parenthetical",
+
+@@ -173,0 +185,4 @@
+
++9. When building sections[].content, strip all [CITATION:] labels but leave the original citation text in place. Example: 'colonized by [CITATION:(1)] trillions' → 'colonized by (1) trillions'. The citations array captures the mapping separately.
+
++10. For each section, split the content into separate paragraphs in the "paragraphs" array. Each paragraph boundary is indicated by a blank line, [PARA_START]/[PARA_END] labels, or indentation change in the source text. Also provide "content" as a flat string for backward compatibility.
+
++11. For each citation, record "citation_type": "parenthetical" or "narrative". Parenthetical = citation inside parentheses. Narrative = author name is part of the sentence with year in parentheses.
+
++12. Group/organizational authors: set parsed.authors[0].is_group=true, last='CDC'. No-date references: parsed.year='n.d.'. In-press references: parsed.year='in press'.
+
+@@ -209,2 +224,2 @@
+
+-        max_tokens=16384,
+
+-    )
++        max_tokens=65536,
+
++    )
+
+--- DIFF FOR transform_agent.py ---
+--- old\old_transform_agent.py
+
++++ agents\transform_agent.py
+
+@@ -88,0 +89,7 @@
+
++STYLE_ALIASES = {
+
++    "apa": ["apa", "american psychological", "7th edition", "author-date"],
+
++    "ieee": ["ieee", "institute of electrical"],
+
++    "generic": [],
+
++}
+
++
+
++
+
+@@ -94,5 +101,6 @@
+
+-    s = journal_style.lower()
+
+-    if "apa" in s:
+
+-        return "apa"
+
+-    if "ieee" in s:
+
+-        return "ieee"
+
++    s = journal_style.lower().strip()
+
++    if not s:
+
++        return "generic"
+
++    for style, aliases in STYLE_ALIASES.items():
+
++        if any(alias in s for alias in aliases):
+
++            return style
+
+@@ -203,0 +212,10 @@
+
++Same author, same year: add lowercase letter suffix.
+
++  Assign alphabetically by title: earliest title = a, next = b.
+
++  Apply same suffix in the References section.
+
++  Example: (Smith, 2020a) and (Smith, 2020b)
+
++
+
++No date: (Smith, n.d.) — use "n.d." when publication year is unavailable
+
++In press: (Smith, in press) — for accepted but unpublished works
+
++
+
++After expanding citation ranges (e.g. (9-12) → four citations), sort ALL citations in a multi-citation parenthetical ALPHABETICALLY by first author surname.
+
++
+
+@@ -232 +250,5 @@
+
+-TITLE: Sentence case — only first word, proper nouns, first word after colon capitalized.
+
++TITLE: Sentence case for article/chapter titles:
+
++  - Capitalize ONLY: first word, first word after colon, proper nouns
+
++  - KEEP original capitalization for: gene names (e.g. EHEC), species names,
+
++    country names, disease names, chemical formulas, acronyms
+
++  - DO NOT capitalize: all other words
+
+@@ -242,0 +265,11 @@
+
++  DOIs may contain line-break artifacts from PDF extraction (e.g. 'https://doi.org/10.1073/\npnas.xxx').
+
++  Detect and merge broken DOIs into a single continuous URL.
+
++
+
++EDITORS (for book chapters):
+
++  Single editor:   In A. A. Editor (Ed.),
+
++  Multiple editors: In A. A. Editor & B. B. Editor (Eds.),
+
++  Three+ editors: In A. A. Editor et al. (Eds.),
+
++
+
++CITATION vs REFERENCE author rules:
+
++  CITATION rule: 3+ authors in text → first author + et al. every time
+
++  REFERENCE rule: ≤20 authors → list ALL. >20 authors → first 19, ..., last author
+
+@@ -291 +324 @@
+
+-    {"element": "...", "current": "...", "required": "...", "severity": "high|medium|low", "apa_ref": "§X.XX"}
+
++    {"element": "...", "text": "...", "message": "...", "expected": "...", "severity": "high|medium|low", "rule_reference": "§X.XX"}
+
+@@ -470 +503 @@
+
+-    {"element": "...", "current": "...", "required": "...", "severity": "high|medium|low"}
+
++    {"element": "...", "text": "...", "message": "...", "expected": "...", "severity": "high|medium|low", "rule_reference": "..."}
+
+@@ -583 +616,3 @@
+
+-  "violations": [...],
+
++  "violations": [
+
++    {"element": "...", "text": "...", "message": "...", "expected": "...", "rule_reference": "..."}
+
++  ],
+
+@@ -703,2 +738,2 @@
+
+-        max_tokens=16384,
+
+-    )
++        max_tokens=65536,
+
++    )
+
+--- DIFF FOR validate_agent.py ---
+--- old\old_validation_agent.py
+
++++ agents\validate_agent.py
+
+@@ -21,7 +21,7 @@
+
+-    "document_format": 0.10,
+
+-    "abstract":        0.10,
+
+-    "headings":        0.15,
+
+-    "citations":       0.25,
+
+-    "references":      0.25,
+
+-    "figures":         0.075,
+
+-    "tables":          0.075,
+
++    "document_format": 0.18,
+
++    "abstract":        0.12,
+
++    "headings":        0.13,
+
++    "citations":       0.22,
+
++    "references":      0.22,
+
++    "figures":         0.065,
+
++    "tables":          0.065,
+
+@@ -129 +129 @@
+
+-### CHECK 1 — Citations (weight: 25%)
+
++### CHECK 1 — Citations (weight: 22%)
+
+@@ -137 +137 @@
+
+-### CHECK 2 — References (weight: 25%)
+
++### CHECK 2 — References (weight: 22%)
+
+@@ -148 +148 @@
+
+-### CHECK 3 — Headings (weight: 15%)
+
++### CHECK 3 — Headings (weight: 13%)
+
+@@ -151 +151,3 @@
+
+-✓ H3: bold + italic + flush left + Title Case
+
++✓ H3: bold + italic + flush left + indented + Title Case + inline with text
+
++✓ H4: bold + NOT italic + indented + Title Case + inline with text + ends with period
+
++✓ H5: bold + italic + indented + Title Case + inline with text + ends with period
+
+@@ -153,3 +155,4 @@
+
+-Scoring: 100 base. -25 per missing IMRAD section. -10 per wrong heading format.
+
+-
+
+-### CHECK 4 — Document Format (weight: 10%)
+
++✓ APA §2.27 Note: "Introduction" should NOT appear as a heading. Body text begins after the repeated title. Deduct -15 if "Introduction" appears as an H1 heading.
+
++Scoring: 100 base. -25 per missing IMRAD section. -15 for Introduction heading present. -10 per wrong heading format.
+
++
+
++### CHECK 4 — Document Format (weight: 18%)
+
+@@ -165 +168 @@
+
+-### CHECK 5 — Abstract (weight: 10%)
+
++### CHECK 5 — Abstract (weight: 12%)
+
+@@ -172 +175 @@
+
+-### CHECK 6 — Figures (weight: 7.5%)
+
++### CHECK 6 — Figures (weight: 6.5%)
+
+@@ -179 +182 @@
+
+-### CHECK 7 — Tables (weight: 7.5%)
+
++### CHECK 7 — Tables (weight: 6.5%)
+
+@@ -186 +189 @@
+
+-overall = (citations × 0.25) + (references × 0.25) + (headings × 0.15) + (doc_format × 0.10) + (abstract × 0.10) + (figures × 0.075) + (tables × 0.075)
+
++overall = (citations × 0.22) + (references × 0.22) + (doc_format × 0.18) + (headings × 0.13) + (abstract × 0.12) + (figures × 0.065) + (tables × 0.065)
+
+@@ -317,2 +320,2 @@
+
+-        max_tokens=8192,
+
+-    )
++        max_tokens=65536,
+
++    )
