@@ -98,7 +98,7 @@ const FEATURES = [
   { icon: Icons.file, iconClass: 'fi-blue', title: 'PDF & DOCX Input', desc: 'Upload any research paper up to 10MB. We preserve every word.' },
   { icon: Icons.journals, iconClass: 'fi-orange', title: '5 Journal Styles', desc: 'APA 7th, IEEE, Vancouver, Springer & Chicago — built in.' },
   { icon: Icons.chart, iconClass: 'fi-blue', title: 'Compliance Score', desc: 'Section-by-section accuracy score from 0–100.' },
-  { icon: Icons.bolt, iconClass: 'fi-orange', title: 'Sub-60 Second Speed', desc: 'Gemini 3 Flash runs 5 AI agents in parallel for fast results.' }
+  { icon: Icons.bolt, iconClass: 'fi-orange', title: 'Lightning Fast', desc: 'Gemini 3 Flash runs 5 AI agents in parallel for fast results.' }
 ]
 
 const STEPS = [
@@ -435,7 +435,7 @@ function Landing({ onGetStarted }) {
             <h1 className="hero-title">
               Your Research Paper.<br />
               <span className="gradient-blue">Journal-Ready</span>{' '}
-              <span className="gradient-orange">in 60s.</span>
+              <span className="gradient-orange">in minutes.</span>
             </h1>
             <p className="hero-sub">
               Upload a PDF or DOCX, choose your target journal style, and let 5 AI agents handle every formatting rule — from fonts to citations to references.
