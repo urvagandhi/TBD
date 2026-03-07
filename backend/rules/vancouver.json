@@ -11,14 +11,24 @@
       "right": "1in"
     },
     "alignment": "left",
-    "columns": 1
+    "columns": 1,
+
+    "page_numbers": "top_right",
+    "reference_section_new_page": true,
+    "paragraph_spacing": "standard"
   },
+
   "title_page": {
     "title_case": "Title Case",
     "title_bold": false,
     "title_centered": false,
-    "title_font_size": 12
+    "title_font_size": 12,
+
+    "authors_below_title": true,
+    "affiliations_required": true,
+    "corresponding_author_allowed": true
   },
+
   "abstract": {
     "label": "Abstract",
     "label_bold": true,
@@ -28,8 +38,12 @@
     "indent_first_line": false,
     "keywords_present": true,
     "keywords_label": "Keywords:",
-    "keywords_italic": false
+    "keywords_italic": false,
+
+    "structured_allowed": true,
+    "structured_sections": ["Background", "Methods", "Results", "Conclusion"]
   },
+
   "headings": {
     "H1": {
       "bold": true,
@@ -38,7 +52,10 @@
       "underline": false,
       "case": "UPPERCASE",
       "numbering": "none",
-      "font_size": 12
+      "font_size": 12,
+
+      "spacing_before": "1_line",
+      "spacing_after": "0.5_line"
     },
     "H2": {
       "bold": true,
@@ -47,7 +64,10 @@
       "underline": false,
       "case": "Title Case",
       "numbering": "none",
-      "font_size": 12
+      "font_size": 12,
+
+      "spacing_before": "1_line",
+      "spacing_after": "0.5_line"
     },
     "H3": {
       "bold": false,
@@ -58,9 +78,13 @@
       "case": "Sentence case",
       "numbering": "none",
       "inline_with_text": false,
-      "font_size": 12
+      "font_size": 12,
+
+      "spacing_before": "0.5_line",
+      "spacing_after": "0.25_line"
     }
   },
+
   "citations": {
     "style": "numbered",
     "brackets": "square",
@@ -69,8 +93,17 @@
     "format_three_plus": "[N]",
     "format_numbered": "[N]",
     "include_page_for_quotes": false,
-    "page_format": "p. 45"
+    "page_format": "p. 45",
+
+    "reuse_number_for_repeat_citation": true,
+    "multiple_citation_separator": ",",
+    "citation_range_symbol": "-",
+    "example_range": "[4-7]",
+    "example_multiple": "[3,5,9]",
+    "citation_order": "appearance",
+    "citation_position": "after punctuation"
   },
+
   "references": {
     "section_label": "References",
     "label_bold": true,
@@ -81,6 +114,13 @@
     "indent_size": "0.5in",
     "line_spacing": 1.0,
     "space_between_entries": false,
+
+    "numbered_reference_list": true,
+    "author_limit_before_et_al": 6,
+    "journal_name_abbreviation_required": true,
+    "journal_abbreviation_source": "PubMed",
+    "reference_punctuation": "period_separated",
+
     "formats": {
       "journal_article": "Author AA, Author BB. Title of article. Journal Abbreviation. Year;Volume(Issue):Page-Page. doi:10.xxxx/xxxxx.",
       "book": "Author AA. Title of Book. Edition. Place: Publisher; Year.",
@@ -89,6 +129,7 @@
       "conference_paper": "Author AA. Title of paper. In: Conference Name; Year Mon Day; City. Place: Publisher; Year. p. Page-Page."
     }
   },
+
   "figures": {
     "label_prefix": "Figure",
     "label_bold": false,
@@ -97,8 +138,13 @@
     "caption_italic": false,
     "caption_alignment": "left",
     "numbering": "arabic",
-    "note_label": "Note:"
+    "note_label": "Note:",
+
+    "figure_citation_required": true,
+    "figure_reference_style": "Figure N",
+    "figure_caption_example": "Figure 1. Example description."
   },
+
   "tables": {
     "label_prefix": "Table",
     "label_bold": false,
@@ -108,12 +154,19 @@
     "caption_alignment": "left",
     "numbering": "arabic",
     "border_style": "header_only",
-    "note_label": "Note:"
+    "note_label": "Note:",
+
+    "table_reference_style": "Table N",
+    "table_citation_required": true
   },
+
   "equations": {
     "numbering": "right_aligned",
-    "numbering_format": "(1)"
+    "numbering_format": "(1)",
+
+    "equation_reference_style": "Eq. (N)"
   },
+
   "general_rules": {
     "doi_format": "doi:10.xxxx/xxxxx",
     "url_format": "Available from: URL",
@@ -121,6 +174,10 @@
     "et_al_threshold": 6,
     "use_ampersand_in_citations": false,
     "use_ampersand_in_references": false,
-    "oxford_comma": false
+    "oxford_comma": false,
+
+    "journal_abbreviation_required": true,
+    "reference_list_numbered": true,
+    "citation_reuse_required": true
   }
 }

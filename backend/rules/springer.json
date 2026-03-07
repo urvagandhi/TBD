@@ -1,5 +1,6 @@
 {
   "style_name": "Springer LNCS",
+
   "document": {
     "font": "Times New Roman",
     "font_size": 10,
@@ -13,12 +14,14 @@
     "alignment": "justify",
     "columns": 1
   },
+
   "title_page": {
     "title_case": "Title Case",
     "title_bold": true,
     "title_centered": false,
     "title_font_size": 14
   },
+
   "abstract": {
     "label": "Abstract",
     "label_bold": true,
@@ -30,6 +33,7 @@
     "keywords_label": "Keywords:",
     "keywords_italic": false
   },
+
   "headings": {
     "H1": {
       "bold": true,
@@ -38,7 +42,9 @@
       "underline": false,
       "case": "Title Case",
       "numbering": "numeric",
-      "font_size": 12
+      "font_size": 12,
+      "spacing_before": 12,
+      "spacing_after": 6
     },
     "H2": {
       "bold": true,
@@ -47,7 +53,9 @@
       "underline": false,
       "case": "Title Case",
       "numbering": "numeric",
-      "font_size": 11
+      "font_size": 11,
+      "spacing_before": 10,
+      "spacing_after": 4
     },
     "H3": {
       "bold": false,
@@ -58,9 +66,12 @@
       "case": "Sentence case",
       "numbering": "numeric",
       "inline_with_text": false,
-      "font_size": 10
+      "font_size": 10,
+      "spacing_before": 8,
+      "spacing_after": 4
     }
   },
+
   "citations": {
     "style": "author-date",
     "brackets": "parentheses",
@@ -71,6 +82,7 @@
     "include_page_for_quotes": false,
     "page_format": "p. 45"
   },
+
   "references": {
     "section_label": "References",
     "label_bold": true,
@@ -81,14 +93,20 @@
     "indent_size": "0.5in",
     "line_spacing": 1.0,
     "space_between_entries": false,
+    "max_authors_before_et_al": 3,
+    "font_size": 9,
     "formats": {
       "journal_article": "Author AA, Author BB (Year) Title of article. Journal Name Volume(Issue):Page–Page",
       "book": "Author AA (Year) Title of Book. Publisher, City",
       "book_chapter": "Author AA (Year) Title of chapter. In: Editor AA (ed) Title of Book. Publisher, City, pp Page–Page",
+      "book_chapter_multiple_editors": "Author AA (Year) Title of chapter. In: Editor AA, Editor BB (eds) Title of Book. Publisher, City, pp Page–Page",
       "website": "Author AA (Year) Title of page. URL. Accessed Day Mon Year",
-      "conference_paper": "Author AA (Year) Title of paper. In: Proceedings of Conference Name, pp Page–Page"
+      "conference_paper": "Author AA (Year) Title of paper. In: Proceedings of Conference Name, pp Page–Page",
+      "thesis": "Author AA (Year) Title of Thesis. University",
+      "dataset": "Author AA (Year) Dataset Title. Repository. DOI"
     }
   },
+
   "figures": {
     "label_prefix": "Fig.",
     "label_bold": true,
@@ -99,6 +117,7 @@
     "numbering": "arabic",
     "note_label": "Note:"
   },
+
   "tables": {
     "label_prefix": "Table",
     "label_bold": true,
@@ -110,10 +129,52 @@
     "border_style": "top_bottom_only",
     "note_label": "Note:"
   },
+
   "equations": {
     "numbering": "right_aligned",
     "numbering_format": "(1)"
   },
+
+  "block_quotes": {
+    "threshold_words": 40,
+    "left_indent": "0.5in",
+    "no_quotation_marks": true,
+    "citation_format": "(Author Year, p. X)"
+  },
+
+  "appendices": {
+    "label_format": "Appendix {letter}",
+    "label_centered": false,
+    "label_bold": true,
+    "title_centered": false,
+    "title_bold": true,
+    "numbering_style": "alphabetical"
+  },
+
+  "footnotes": {
+    "position": "page_bottom",
+    "font_size": 8,
+    "line_spacing": 1.0,
+    "numbering_style": "numeric"
+  },
+
+  "statistical_notation": {
+    "italic_symbols": [
+      "p",
+      "n",
+      "t",
+      "F",
+      "r",
+      "R2"
+    ],
+    "confidence_interval_format": "CI 95%",
+    "significance_levels": [
+      "p < .05",
+      "p < .01",
+      "p < .001"
+    ]
+  },
+
   "general_rules": {
     "doi_format": "https://doi.org/xxxxx",
     "url_format": "direct url",
