@@ -46,6 +46,7 @@
       "spacing_before": 12,
       "spacing_after": 6
     },
+
     "H2": {
       "bold": true,
       "italic": false,
@@ -57,6 +58,7 @@
       "spacing_before": 10,
       "spacing_after": 4
     },
+
     "H3": {
       "bold": false,
       "italic": true,
@@ -94,7 +96,7 @@
     "line_spacing": 1.0,
     "space_between_entries": false,
     "max_authors_before_et_al": 3,
-    "font_size": 9,
+
     "formats": {
       "journal_article": "Author AA, Author BB (Year) Title of article. Journal Name Volume(Issue):Page–Page",
       "book": "Author AA (Year) Title of Book. Publisher, City",
