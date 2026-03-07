@@ -1,0 +1,56 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap');
+
+/* ── Design Tokens (matching main frontend) ── */
+:root {
+  --bg: #ffffff;
+  --bg-soft: #F8FAFF;
+  --bg-muted: #F1F5FF;
+  --primary: #2563EB;
+  --primary-light: #EFF6FF;
+  --orange: #F97316;
+  --orange-hover: #EA6C0A;
+  --orange-light: #FFF7ED;
+  --text: #0F172A;
+  --text-secondary: #475569;
+  --text-muted: #94A3B8;
+  --border: #E2E8F0;
+  --success: #10B981;
+  --success-bg: #ECFDF5;
+  --warning: #F59E0B;
+  --warning-bg: #FFFBEB;
+  --error: #EF4444;
+  --error-bg: #FEF2F2;
+  --shadow-sm: 0 1px 3px rgba(15,23,42,0.07), 0 1px 2px rgba(15,23,42,0.04);
+  --shadow: 0 4px 16px rgba(15,23,42,0.08), 0 2px 6px rgba(15,23,42,0.05);
+  --shadow-lg: 0 16px 48px rgba(15,23,42,0.1), 0 4px 16px rgba(15,23,42,0.06);
+  --shadow-glow: 0 0 0 4px rgba(249,115,22,0.15);
+  --radius: 16px;
+  --radius-sm: 10px;
+  --radius-pill: 999px;
+  --font: 'Outfit', sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+button { font-family: var(--font); cursor: pointer; }
+select { font-family: var(--font); }
+
+/* ── Keyframes ── */
+@keyframes fadeUp { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }
+@keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
+@keyframes slideRight { from { opacity:0; transform:translateX(-8px); } to { opacity:1; transform:translateX(0); } }
+@keyframes glow { 0%,100% { box-shadow:0 0 12px rgba(249,115,22,0.25); } 50% { box-shadow:0 0 28px rgba(249,115,22,0.5); } }
+@keyframes orbitDot { 0% { transform:rotate(0deg) translateX(22px) rotate(0deg); } 100% { transform:rotate(360deg) translateX(22px) rotate(-360deg); } }
+@keyframes pulseRing { 0% { box-shadow:0 0 0 0 rgba(249,115,22,0.3); } 100% { box-shadow:0 0 0 12px rgba(249,115,22,0); } }
+@keyframes stepFade { from { opacity:0; transform:translateX(-6px); } to { opacity:1; transform:translateX(0); } }
+@keyframes countUp { from { opacity:0; transform:scale(0.6); } to { opacity:1; transform:scale(1); } }
+@keyframes spin { to { transform:rotate(360deg); } }

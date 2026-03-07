@@ -1353,14 +1353,67 @@ async def preview_file(filepath: str) -> HTMLResponse:
   ::-webkit-scrollbar-thumb {{ background: #bbb; border-radius: 4px; }}
   ::-webkit-scrollbar-thumb:hover {{ background: #999; }}
   {col_css}
+  /* Editable mode styles */
+  .page-body[contenteditable="true"] {{
+    outline: none;
+    cursor: text;
+  }}
+  .page-body[contenteditable="true"]:focus {{
+    box-shadow: inset 0 0 0 2px rgba(59,130,246,0.3);
+    border-radius: 4px;
+  }}
+  .edit-banner {{
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    background: #2563eb;
+    color: #fff;
+    text-align: center;
+    padding: 6px 12px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    display: none;
+  }}
+  .edit-banner.visible {{
+    display: block;
+  }}
+  body.editing {{
+    padding-top: 32px;
+  }}
 </style>
 </head>
 <body>
+<div class="edit-banner" id="editBanner">Editing Mode — Make your changes directly in the document</div>
 <div class="page">
-<div class="page-body">
+<div class="page-body" id="pageBody">
 {html_body}
 </div>
 </div>
+<script>
+  // Listen for messages from parent window to toggle edit mode and extract content
+  window.addEventListener('message', function(e) {{
+    var body = document.getElementById('pageBody');
+    var banner = document.getElementById('editBanner');
+
+    if (e.data && e.data.type === 'SET_EDITABLE') {{
+      var editable = !!e.data.editable;
+      body.contentEditable = editable ? 'true' : 'false';
+      banner.classList.toggle('visible', editable);
+      document.body.classList.toggle('editing', editable);
+    }}
+
+    if (e.data && e.data.type === 'GET_HTML') {{
+      // Return the edited HTML content to the parent
+      window.parent.postMessage({{
+        type: 'EDITED_HTML',
+        html: body.innerHTML
+      }}, '*');
+    }}
+  }});
+</script>
 </body>
 </html>"""
         return HTMLResponse(content=html_page)
@@ -1370,6 +1423,207 @@ async def preview_file(filepath: str) -> HTMLResponse:
     except Exception as e:
         logger.exception("[PREVIEW] Error converting %s: %s", filepath, e)
         raise HTTPException(status_code=500, detail=f"Preview generation failed: {str(e)[:200]}")
+
+
+# ---------------------------------------------------------------------------
+# POST /rebuild-docx — Surgically apply user text edits onto original DOCX
+# Uses _paramap.json (saved at format time) as ground truth — NO mammoth.
+# ---------------------------------------------------------------------------
+
+def _normalize_text(text: str) -> str:
+    """
+    Normalize text for comparison — collapse whitespace, strip, and
+    normalize unicode so that browser contenteditable differences
+    (entity decoding, whitespace normalization) don't cause false diffs.
+    """
+    t = text.replace("\xa0", " ")   # non-breaking space → space
+    t = t.replace("\u200b", "")     # zero-width space
+    t = t.replace("\u2019", "'")    # smart quotes → ascii
+    t = t.replace("\u2018", "'")
+    t = t.replace("\u201c", '"')
+    t = t.replace("\u201d", '"')
+    t = t.replace("\u2013", "-")    # en-dash
+    t = t.replace("\u2014", "-")    # em-dash
+    # Collapse all whitespace runs to single space
+    t = re.sub(r'\s+', ' ', t).strip()
+    return t
+
+
+def _extract_text_blocks(html: str) -> list[str]:
+    """Extract ordered plain text blocks from contenteditable HTML."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+    blocks: list[str] = []
+    BLOCK_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li",
+                  "td", "th", "blockquote", "pre", "div"}
+
+    for el in soup.find_all(BLOCK_TAGS):
+        # Skip nested blocks (e.g. <p> inside <div>)
+        if el.find_parent(BLOCK_TAGS):
+            continue
+        text = _normalize_text(el.get_text(separator=" ", strip=True))
+        if text:
+            blocks.append(text)
+
+    return blocks
+
+
+@app.post("/rebuild-docx")
+async def rebuild_docx_from_html(request: Request) -> FileResponse:
+    """
+    Surgically patch only changed paragraphs in the original formatted DOCX.
+
+    Uses the _paramap.json (saved at format time by crew.py) as the ground
+    truth for paragraph text and indices — never goes through mammoth.
+    This guarantees:
+    - Paragraph styles (Heading 1, IEEE Body, etc.) are NEVER touched
+    - Only run.text is modified for paragraphs where text actually changed
+    - Index alignment uses SequenceMatcher to handle block-count drift
+    """
+    body = await request.json()
+    html_content = body.get("html", "")
+    original_filepath = body.get("original_filepath", "")
+    download_format = body.get("format", "docx")  # "docx" or "pdf"
+
+    if not html_content or not html_content.strip():
+        raise HTTPException(status_code=400, detail="No HTML content provided.")
+
+    if not original_filepath:
+        raise HTTPException(status_code=400, detail="Original file path is required.")
+
+    request_id = uuid.uuid4().hex[:8]
+    logger.info("[REBUILD:%s] POST /rebuild-docx — format=%s original=%s",
+                request_id, download_format, original_filepath)
+
+    try:
+        import difflib
+        from docx import Document as DocxDocument
+
+        # ── 1. Locate original DOCX and its paramap ────────────────
+        orig_path = (OUTPUTS_DIR / original_filepath).resolve()
+        if not str(orig_path).startswith(str(OUTPUTS_DIR.resolve())):
+            raise HTTPException(status_code=403, detail="Access denied.")
+        if not orig_path.exists():
+            raise HTTPException(status_code=404, detail="Original DOCX not found.")
+
+        paramap_path = str(orig_path).replace(".docx", "_paramap.json")
+        if not Path(paramap_path).exists():
+            raise HTTPException(status_code=404, detail="Paragraph map not found. Please re-format the document.")
+
+        with open(paramap_path, "r", encoding="utf-8") as f:
+            para_map = json.load(f)
+
+        # ── 2. Build original text list from paramap ────────────────
+        # para_map entries: {"index": int, "text": str, "style": str}
+        original_texts = [_normalize_text(p["text"]) for p in para_map]
+        para_indices = [p["index"] for p in para_map]  # actual doc.paragraphs index
+
+        # ── 3. Extract text blocks from edited HTML ─────────────────
+        edited_blocks = _extract_text_blocks(html_content)
+
+        logger.info("[REBUILD:%s] Paramap entries: %d, Edited blocks: %d",
+                    request_id, len(original_texts), len(edited_blocks))
+
+        # ── 4. Align using SequenceMatcher to handle count drift ────
+        matcher = difflib.SequenceMatcher(
+            None, original_texts, edited_blocks, autojunk=False
+        )
+
+        patches: dict[int, str] = {}  # doc.paragraphs real index → new text
+        for op, i1, i2, j1, j2 in matcher.get_opcodes():
+            if op == "replace":
+                for offset, orig_idx in enumerate(range(i1, i2)):
+                    if j1 + offset < j2:
+                        new_text = edited_blocks[j1 + offset]
+                        if new_text != original_texts[orig_idx]:
+                            real_para_idx = para_indices[orig_idx]
+                            patches[real_para_idx] = new_text
+            # 'equal' — skip (no change)
+            # 'insert'/'delete' — skip for surgical edit (only text replacement)
+
+        logger.info("[REBUILD:%s] %d paragraphs need patching (out of %d)",
+                    request_id, len(patches), len(original_texts))
+
+        if not patches:
+            # Nothing changed — return the original file as-is
+            dl_name = Path(original_filepath).name
+            if download_format == "pdf":
+                pdf_path = _convert_docx_to_pdf(orig_path)
+                return FileResponse(
+                    path=str(pdf_path), filename=dl_name.replace(".docx", ".pdf"),
+                    media_type="application/pdf",
+                )
+            return FileResponse(
+                path=str(orig_path), filename=dl_name,
+                media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+
+        # ── 5. Load DOCX and apply patches ──────────────────────────
+        doc = DocxDocument(str(orig_path))
+
+        patched = 0
+        for para_idx, new_text in patches.items():
+            if para_idx >= len(doc.paragraphs):
+                logger.warning("[REBUILD:%s] Para index %d out of range (%d paras), skipping",
+                               request_id, para_idx, len(doc.paragraphs))
+                continue
+
+            para = doc.paragraphs[para_idx]
+
+            # Only touch run.text — NEVER touch para.style
+            if not para.runs:
+                continue
+
+            # Write new text into first run, clear the rest
+            first_run = para.runs[0]
+            first_run.text = new_text
+            for run in para.runs[1:]:
+                run.text = ""
+
+            patched += 1
+
+        logger.info("[REBUILD:%s] Patched %d/%d paragraphs (styles untouched)",
+                    request_id, patched, len(patches))
+
+        # ── 6. Save to a new file ───────────────────────────────────
+        out_dir = OUTPUTS_DIR / f"run_{request_id}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "edited_paper.docx"
+        doc.save(str(out_path))
+
+        logger.info("[REBUILD:%s] DOCX saved — %s (%.1f KB)",
+                    request_id, out_path, out_path.stat().st_size / 1024)
+
+        # ── 7. Return as DOCX or convert to PDF ────────────────────
+        if download_format == "pdf":
+            try:
+                pdf_path = _convert_docx_to_pdf(out_path)
+                return FileResponse(
+                    path=str(pdf_path),
+                    filename="edited_paper.pdf",
+                    media_type="application/pdf",
+                    headers={"Content-Disposition": 'attachment; filename="edited_paper.pdf"'},
+                )
+            except RuntimeError as e:
+                raise HTTPException(status_code=500, detail={
+                    "success": False, "error": str(e),
+                })
+
+        return FileResponse(
+            path=str(out_path),
+            filename="edited_paper.docx",
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": 'attachment; filename="edited_paper.docx"'},
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        logger.error("[REBUILD:%s] Error: %s\n%s", request_id, e, tb)
+        raise HTTPException(status_code=500, detail=f"Rebuild failed: {str(e)[:300]}")
 
 
 # ---------------------------------------------------------------------------

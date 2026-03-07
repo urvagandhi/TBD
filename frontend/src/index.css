@@ -1797,6 +1797,36 @@ input, select { font-family: var(--font); }
   box-shadow: 0 4px 12px rgba(37, 99, 235, 0.15);
 }
 
+/* Edit button */
+.rs-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 20px;
+  border-radius: var(--radius-pill);
+  border: 1.5px solid var(--border);
+  background: #fff;
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+  font-weight: 700;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.rs-edit-btn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--bg-soft);
+  transform: translateY(-1px);
+}
+.rs-edit-btn.active {
+  border-color: var(--primary);
+  background: var(--blue-alpha, rgba(37,99,235,0.08));
+  color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(37,99,235,0.2);
+}
+
 /* ── Responsive ── */
 @media (max-width: 768px) {
   .rs-mobile-tabs { display: flex; }
