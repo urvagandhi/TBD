@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from docx import Document
+from docx.enum.section import WD_SECTION
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -656,7 +657,11 @@ def build_ieee_docx(instructions: dict, output_path: str, image_store: Optional[
 
     _apply_document_defaults(doc, font_name, font_size, line_spacing)
     _set_document_margins(doc, margins)
-    _set_columns(doc, columns)
+
+    # Force first section to 1 column for Title/Authors
+    _set_columns(doc.sections[0], 1)
+
+    in_two_column = False
 
     fig_rules = rules.get("figures", {})
     tbl_rules = rules.get("tables", {})
@@ -668,6 +673,13 @@ def build_ieee_docx(instructions: dict, output_path: str, image_store: Optional[
             content = ""
 
         try:
+            is_front_matter = section_type in ("title", "authors", "affiliations", "author_blocks")
+            if not is_front_matter and not in_two_column and columns > 1:
+                # Transition to 2 columns
+                new_sect = doc.add_section(WD_SECTION.CONTINUOUS)
+                _set_columns(new_sect, columns)
+                in_two_column = True
+
             if section_type == "title":
                 title_rules = rules.get("title_page", {})
                 _add_title(doc, content, title_rules, font_name, font_size)
@@ -675,15 +687,24 @@ def build_ieee_docx(instructions: dict, output_path: str, image_store: Optional[
                 para = doc.add_paragraph()
                 para.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 _apply_line_spacing(para.paragraph_format, line_spacing)
-                run = para.add_run(content)
-                _apply_font(run, font_name, font_size)
+                # Split multiple authors by newline if provided, or comma
+                lines = content.split('\n')
+                for i, line in enumerate(lines):
+                    run = para.add_run(line.strip())
+                    _apply_font(run, font_name, font_size)
+                    if i < len(lines) - 1:
+                        para.add_run('\n')
+            elif section_type == "author_blocks":
+                blocks = section.get("blocks", [])
+                if blocks:
+                    _add_author_blocks_table(doc, blocks, font_name, font_size, line_spacing)
             elif section_type == "heading":
                 level = _safe_int(section.get("level", 1), 1)
                 heading_rules = rules.get("headings", {}).get(f"H{level}", {})
                 _add_heading(doc, content, level, heading_rules, font_name, font_size)
             elif section_type == "abstract":
                 abstract_rules = rules.get("abstract", {})
-                _add_abstract(doc, content, abstract_rules, font_name, font_size, line_spacing)
+                _add_abstract_inline(doc, content, abstract_rules, font_name, font_size, line_spacing, default_align=doc_alignment)
             elif section_type == "keywords":
                 kw_rules = rules.get("keywords_section", rules.get("abstract", {}))
                 _add_keywords(doc, content, kw_rules, font_name, font_size)
@@ -1769,12 +1790,15 @@ def _apply_document_defaults(doc: Document, font_name: str, font_size: int, line
         logger.warning("[DOCX] Could not set document defaults: %s", e)
 
 
-def _set_columns(doc: Document, columns: int) -> None:
-    """Set the number of columns for the entire document."""
+def _set_columns(doc_or_section, columns: int) -> None:
+    """Set the number of columns for the document or section."""
     if columns <= 1:
         return
     try:
-        section = doc.sections[0]
+        if hasattr(doc_or_section, "sections"):
+            section = doc_or_section.sections[0]
+        else:
+            section = doc_or_section
         cols_list = section._sectPr.xpath('./w:cols')
         if cols_list:
             cols = cols_list[0]
@@ -1940,6 +1964,30 @@ def _add_abstract(doc: Document, text: str, abstract_rules: dict, font_name: str
     _apply_line_spacing(body_para.paragraph_format, line_spacing)
 
 
+def _add_abstract_inline(doc: Document, text: str, abstract_rules: dict, font_name: str, font_size: int, line_spacing: float, default_align="justify") -> None:
+    """Add abstract with an inline label (e.g. 'Abstract—Text...'), used for IEEE/Springer."""
+    label = abstract_rules.get("label", "Abstract")
+    if not label.endswith("—") and not label.endswith("-"):
+        label += "—" # IEEE style usually has em-dash
+
+    label_bold = abstract_rules.get("label_bold", True)
+    label_italic = abstract_rules.get("label_italic", False)
+
+    para = doc.add_paragraph()
+    if default_align == "justify":
+        para.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    elif default_align == "left":
+        para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+
+    _apply_line_spacing(para.paragraph_format, line_spacing)
+
+    label_run = para.add_run(label)
+    _apply_font(label_run, font_name, font_size, bold=label_bold, italic=label_italic)
+
+    body_run = para.add_run(text)
+    _apply_font(body_run, font_name, font_size)
+
+
 def _add_keywords(doc: Document, text: str, rules: dict, font_name: str, font_size: int) -> None:
     label = rules.get("keywords_label", "Index Terms—")
     keywords_italic = rules.get("keywords_italic", False)
@@ -1987,6 +2035,65 @@ def _add_table_caption(doc: Document, text: str, tbl_rules: dict, font_name: str
 
     run = para.add_run(text)
     _apply_font(run, font_name, font_size, bold=bold)
+
+
+def _add_author_blocks_table(doc: Document, blocks: list, font_name: str, font_size: int, line_spacing: float) -> None:
+    """Add authors side-by-side using borderless tables. Wraps to max 3 columns."""
+    if not blocks:
+        return
+        
+    if len(blocks) == 4:
+        chunks = [blocks[0:2], blocks[2:4]]
+    else:
+        max_cols = 3
+        chunks = [blocks[i:i + max_cols] for i in range(0, len(blocks), max_cols)]
+        
+    for chunk_idx, chunk in enumerate(chunks):
+        num_cols = len(chunk)
+        table = doc.add_table(rows=1, cols=num_cols)
+        table.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        table.autofit = True
+        
+        for i, block in enumerate(chunk):
+            cell = table.cell(0, i)
+            para = cell.paragraphs[0]
+            para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            _apply_line_spacing(para.paragraph_format, line_spacing)
+            
+            name = block.get("name", "")
+            if name:
+                run = para.add_run(name)
+                _apply_font(run, font_name, font_size, bold=False)
+
+            affiliation = block.get("affiliation", [])
+            if isinstance(affiliation, str):
+                affiliation = [affiliation]
+            
+            for j, affil_line in enumerate(affiliation):
+                if para.text:
+                    para.add_run('\n')
+                run = para.add_run(affil_line)
+                # Typically the last line of affiliation (location) is regular, others italic
+                is_italic = True
+                if len(affiliation) > 1 and j == len(affiliation) - 1:
+                    is_italic = False
+                _apply_font(run, font_name, font_size, italic=is_italic)
+                
+            email = block.get("email", "")
+            if email:
+                if para.text:
+                    para.add_run('\n')
+                run = para.add_run(email)
+                _apply_font(run, font_name, font_size, italic=False)
+        
+        # Add slight paragraph spacing between author rows if multiple rows exist
+        if chunk_idx < len(chunks) - 1:
+            spacer = doc.add_paragraph()
+            _apply_line_spacing(spacer.paragraph_format, line_spacing)
+            
+    # Add a blank line after all authors
+    para = doc.add_paragraph()
+    _apply_line_spacing(para.paragraph_format, line_spacing)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -403,9 +403,8 @@ Apply these to the ENTIRE document:
 ## ═══ SECTION B: TITLE & AUTHORS ═══
 
 1. Paper title — BOLD, centered, Title Case, 24pt font size
-2. Author name(s) — centered, NOT bold
-3. Affiliation — centered, italic
-4. Title and authors span BOTH columns (full page width)
+2. Authors & Affiliations — You MUST output an array of `author_blocks`. Group each author (or authors with the same affiliation) into a block. DO NOT use generic "authors" and "affiliations" section types in IEEE format.
+3. Title and authors span BOTH columns (full page width)
 
 ## ═══ SECTION C: ABSTRACT ═══
 
@@ -496,7 +495,13 @@ Return ONLY this JSON (no markdown, no backticks):
     "rules": {},
     "sections": [
       {"type": "title", "content": "...", "bold": true, "centered": true},
-      {"type": "authors", "content": "...", "centered": true},
+      {"type": "author_blocks", "blocks": [
+        {
+          "name": "A. B. Author",
+          "affiliation": ["Department of Science", "University Name", "City, Country"],
+          "email": "author@email.com"
+        }
+      ]},
       {"type": "abstract", "content": "..."},
       {"type": "keywords", "content": "Index Terms— term1, term2"},
       {"type": "heading", "content": "I. INTRODUCTION", "level": 1},
@@ -515,6 +520,7 @@ NEGATIVE CONSTRAINTS:
 - NO PYTHON CODE (e.g., "import json...")
 - NO CODE FENCES (```json ... ```)
 - NO COMMENTARY
+- NO DUPLICATE ABSTRACTS: If you include "type": "abstract" and "type": "keywords", do NOT also include them as "type": "heading" and "type": "paragraph" in the body.
 
 ## ═══ ABSOLUTE REQUIREMENTS ═══
 
@@ -523,6 +529,7 @@ NEGATIVE CONSTRAINTS:
 3. References ordered by appearance, NOT alphabetical.
 4. NEVER truncate body text.
 5. Use *asterisks* for italic markers (journal names, book titles).
+6. DO NOT repeat the abstract. The 'abstract' type already renders the 'Abstract—' label and text together.
 
 ## OUTPUT
 
