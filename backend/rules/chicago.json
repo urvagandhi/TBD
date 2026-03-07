@@ -11,22 +11,33 @@
       "right": "1in"
     },
     "alignment": "left",
-    "columns": 1
+    "columns": 1,
+    "page_numbers": "top_right",
+    "reference_section_new_page": true,
+    "paragraph_spacing": "standard",
+    "first_line_indent": "0.5in"
   },
   "title_page": {
     "title_case": "Title Case",
     "title_bold": false,
     "title_centered": true,
-    "title_font_size": 12
+    "title_font_size": 12,
+    "author_name_below_title": true,
+    "institution_optional": true,
+    "date_optional": true
   },
   "abstract": {
     "label": "Abstract",
     "label_bold": false,
     "label_centered": true,
     "label_italic": false,
-    "max_words": null,
+    "max_words": 250,
     "indent_first_line": true,
-    "keywords_present": false
+    "keywords_present": false,
+    "keywords_label": "Keywords:",
+    "keywords_italic": false,
+    "structured_allowed": true,
+    "abstract_spacing_after": "1_line"
   },
   "headings": {
     "H1": {
@@ -36,7 +47,9 @@
       "underline": false,
       "case": "Title Case",
       "numbering": "none",
-      "font_size": 12
+      "font_size": 12,
+      "spacing_before": "1_line",
+      "spacing_after": "0.5_line"
     },
     "H2": {
       "bold": false,
@@ -45,7 +58,9 @@
       "underline": false,
       "case": "Title Case",
       "numbering": "none",
-      "font_size": 12
+      "font_size": 12,
+      "spacing_before": "1_line",
+      "spacing_after": "0.5_line"
     },
     "H3": {
       "bold": false,
@@ -56,7 +71,9 @@
       "case": "Title Case",
       "numbering": "none",
       "inline_with_text": false,
-      "font_size": 12
+      "font_size": 12,
+      "spacing_before": "0.5_line",
+      "spacing_after": "0.25_line"
     }
   },
   "citations": {
@@ -67,7 +84,14 @@
     "format_three_plus": "(Smith et al. 2020)",
     "format_numbered": null,
     "include_page_for_quotes": true,
-    "page_format": "45"
+    "page_format": "45",
+    "multiple_citations_separator": ";",
+    "multiple_example": "(Smith 2020; Jones 2019)",
+    "same_author_multiple_years": "(Smith 2018, 2020)",
+    "same_author_same_year_suffix": "2020a, 2020b",
+    "author_in_text_format": "Smith (2020)",
+    "citation_position": "before punctuation",
+    "citation_reuse_allowed": true
   },
   "references": {
     "section_label": "References",
@@ -80,6 +104,16 @@
     "line_spacing": 1.0,
     "space_between_entries": true,
     "formats": {
+      "author_name_inversion": true,
+      "author_format": "Last, First",
+      "multiple_authors_separator": ",",
+      "last_author_connector": "and",
+      "same_author_repeated_year_suffix": "a,b,c",
+      "title_capitalization": "headline",
+      "journal_title_italic": true,
+      "book_title_italic": true,
+      "doi_preferred_over_url": true,
+      "access_date_required_if_no_date": true,
       "journal_article": "Author, First. Year. \"Title of Article.\" Journal Name Volume (Issue): Page–Page. https://doi.org/xxxxx.",
       "book": "Author, First. Year. Title of Book. City: Publisher.",
       "book_chapter": "Author, First. Year. \"Title of Chapter.\" In Title of Book, edited by First Editor, Page–Page. City: Publisher.",
@@ -95,7 +129,9 @@
     "caption_italic": false,
     "caption_alignment": "left",
     "numbering": "arabic",
-    "note_label": "Note:"
+    "note_label": "Note:",
+    "figure_reference_format": "(see figure 1)",
+    "figure_caption_example": "Figure 1. Description of figure."
   },
   "tables": {
     "label_prefix": "Table",
@@ -106,11 +142,13 @@
     "caption_alignment": "left",
     "numbering": "arabic",
     "border_style": "top_bottom_only",
-    "note_label": "Note:"
+    "note_label": "Note:",
+    "table_reference_format": "(see table 1)"
   },
   "equations": {
     "numbering": "right_aligned",
-    "numbering_format": "(1)"
+    "numbering_format": "(1)",
+    "equation_reference_style": "Eq. (1)"
   },
   "general_rules": {
     "doi_format": "https://doi.org/xxxxx",
@@ -119,6 +157,10 @@
     "et_al_threshold": 4,
     "use_ampersand_in_citations": false,
     "use_ampersand_in_references": false,
-    "oxford_comma": true
+    "oxford_comma": true,
+    "reference_list_alphabetical_priority": "author_last_name",
+    "same_author_sorting": "year_ascending",
+    "same_author_same_year_suffix": "a,b,c",
+    "citation_year_required": true
   }
 }
