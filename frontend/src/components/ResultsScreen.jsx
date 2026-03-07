@@ -194,9 +194,9 @@ export default function ResultsScreen({ result, trustScore, onDownload, onDownlo
   }, [onDownloadEdited])
 
   const REPORT_TABS = [
-    { id: 'done', label: 'Done', icon: <IconCheck />, count: applied.length, color: 'rs-tab-green' },
-    { id: 'overrides', label: 'Your Overrides', icon: <IconGear />, count: skipped.length, color: 'rs-tab-amber' },
-    { id: 'manual', label: 'Manual Action', icon: <IconWarn />, count: manual.length, color: 'rs-tab-red' },
+    { id: 'done', label: 'Auto-Fixed', icon: <IconCheck />, count: applied.length, color: 'rs-tab-green' },
+    { id: 'overrides', label: 'Kept Custom', icon: <IconGear />, count: skipped.length, color: 'rs-tab-amber' },
+    { id: 'manual', label: 'Requires Your Review', icon: <IconWarn />, count: manual.length, color: 'rs-tab-red' },
   ]
 
   const MOBILE_TABS = [

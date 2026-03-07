@@ -48,7 +48,7 @@ litellm.max_tokens = int(os.getenv("GEMINI_MAX_TOKENS", "65536"))
 # Set global litellm request timeout so httpx doesn't use its own (low) default.
 litellm.request_timeout = int(os.getenv("LLM_TIMEOUT", "300"))
 # Retry on transient failures (429, 500, timeout)
-litellm.num_retries = int(os.getenv("LLM_MAX_RETRIES", "3"))
+litellm.num_retries = int(os.getenv("LLM_MAX_RETRIES", "1"))
 
 logger = get_logger(__name__)
 
