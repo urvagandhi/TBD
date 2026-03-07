@@ -43,7 +43,7 @@ export async function startFormat(docId, journal) {
  */
 export async function pollUntilDone(jobId, onProgress, signal) {
   const INTERVAL = 2000;
-  const MAX_POLLS = 150; // 5 minutes max
+  const MAX_POLLS = 600; // 20 minutes max
 
   for (let i = 0; i < MAX_POLLS; i++) {
     if (signal?.aborted) throw new Error("Cancelled");
