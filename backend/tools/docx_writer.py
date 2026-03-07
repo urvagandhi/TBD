@@ -646,6 +646,9 @@ def build_ieee_docx(instructions: dict, output_path: str, image_store: Optional[
     if template_path.exists():
         logger.info("[DOCX_IEEE] Using journal template: %s", template_path.name)
         doc = Document(str(template_path))
+        # Clear existing paragraphs in the template to avoid prepending old text
+        for p in doc.paragraphs:
+            p._element.getparent().remove(p._element)
     else:
         logger.debug("[DOCX_IEEE] No template found for '%s' — using blank document", style_name)
         doc = Document()
@@ -923,6 +926,9 @@ def write_formatted_docx(instructions: dict, output_path: str, image_store: Opti
     if template_path.exists():
         logger.info("[DOCX] Using journal template: %s", template_path.name)
         doc = Document(str(template_path))
+        # Clear existing paragraphs in the template to avoid prepending old text
+        for p in doc.paragraphs:
+            p._element.getparent().remove(p._element)
     else:
         logger.debug("[DOCX] No template found for '%s' — using blank document", style_name)
         doc = Document()
@@ -993,10 +999,20 @@ def write_formatted_docx(instructions: dict, output_path: str, image_store: Opti
 def _apply_document_defaults(doc: Document, font_name: str, font_size: int, line_spacing: float) -> None:
     try:
         style = doc.styles["Normal"]
-        style.font.name = font_name
-        style.font.size = Pt(font_size)
+        # Explicitly set document-wide font
+        font = style.font
+        font.name = font_name
+        font.size = Pt(font_size)
         pf = style.paragraph_format
         _apply_line_spacing(pf, line_spacing)
+        
+        # Also clear any latent element level font overrides in the style
+        if font._element.rFonts is not None:
+            font._element.rFonts.set(qn("w:asciiTheme"), getattr(font._element.rFonts, "asciiTheme", "none"))
+            font._element.rFonts.set(qn("w:hAnsiTheme"), getattr(font._element.rFonts, "hAnsiTheme", "none"))
+            font._element.rFonts.set(qn("w:cstheme"), getattr(font._element.rFonts, "cstheme", "none"))
+            font._element.rFonts.set(qn("w:eastAsiaTheme"), getattr(font._element.rFonts, "eastAsiaTheme", "none"))
+            
     except Exception as e:
         logger.warning("[DOCX] Could not set document defaults: %s", e)
 
@@ -1283,6 +1299,14 @@ def transform_docx_in_place(
 
     for para in doc.paragraphs:
         if not para.style.name.startswith("Heading"):
+            # Re-apply line spacing and font to ALL body paragraphs too
+            try:
+                _apply_line_spacing(para.paragraph_format, line_spacing_v)
+                for run in para.runs:
+                    run.font.name = font_name
+                    run.font.size = Pt(font_size_pt)
+            except Exception as e:
+                logger.warning("[DOCX_INPLACE] Body para format error: %s", e)
             continue
         try:
             level = int(para.style.name.split()[-1])

@@ -817,7 +817,13 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
         raise ParseError("Journal style cannot be empty.")
 
     # ── Improvement 7: Cache check — return instantly for identical submissions ──
-    cache_key = _hash_content(paper_content, journal_style)
+    # Include rules_override hash to prevent semi-custom/full-custom runs from
+    # returning a cached result from a standard mode run on the same paper.
+    _rules_fingerprint = hashlib.sha256(
+        json.dumps(rules_override, sort_keys=True, default=str).encode()
+        if rules_override else b"standard"
+    ).hexdigest()[:16]
+    cache_key = _hash_content(paper_content, journal_style) + _rules_fingerprint
     if cache_key in PIPELINE_CACHE:
         logger.info(
             "[PIPELINE] Cache HIT — journal=%s hash=%s (returning cached result)",

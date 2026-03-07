@@ -63,12 +63,12 @@ export default function ProcessingLoader({ currentStep, journal, filename }) {
       {/* Top — spinner + title */}
       <div className="text-center space-y-3">
         <div className="flex justify-center">
-          <div className="w-12 h-12 rounded-full border-2 border-gray-700 border-t-blue-400 animate-spin" />
+          <div className="w-12 h-12 rounded-full border-2 border-gray-700 border-t-orange-400 animate-spin" />
         </div>
         <div>
           <h2 className="text-lg font-semibold text-white">Formatting your paper...</h2>
           {journal && (
-            <p className="text-sm text-gray-500 mt-1">Applying <span className="text-blue-400">{journal}</span> rules</p>
+            <p className="text-sm text-gray-500 mt-1">Applying <span className="text-orange-400">{journal}</span> rules</p>
           )}
           {filename && (
             <p className="text-xs text-gray-700 mt-0.5 font-mono truncate max-w-xs mx-auto">{filename}</p>
@@ -91,7 +91,7 @@ export default function ProcessingLoader({ currentStep, journal, filename }) {
               key={step.id}
               className={`
                 flex items-start gap-3 rounded-xl px-4 py-3 transition-all duration-300
-                ${status === "active" ? "bg-blue-950/30 border border-blue-900/40" : "bg-transparent"}
+                ${status === "active" ? "bg-orange-950/30 border border-orange-900/40" : "bg-transparent"}
               `}
             >
               {/* Status indicator */}
@@ -99,7 +99,7 @@ export default function ProcessingLoader({ currentStep, journal, filename }) {
                 {status === "done" ? (
                   <CheckCircle className="w-4 h-4 text-green-500" />
                 ) : status === "active" ? (
-                  <div className="w-4 h-4 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
+                  <div className="w-4 h-4 rounded-full border-2 border-orange-400 border-t-transparent animate-spin" />
                 ) : (
                   <div className="w-4 h-4 rounded-full border border-gray-700 bg-gray-800" />
                 )}
@@ -109,7 +109,7 @@ export default function ProcessingLoader({ currentStep, journal, filename }) {
               <Icon
                 className={`w-4 h-4 shrink-0 mt-0.5 ${
                   status === "done" ? "text-green-500"
-                  : status === "active" ? "text-blue-400"
+                  : status === "active" ? "text-orange-400"
                   : "text-gray-700"
                 }`}
               />
@@ -141,7 +141,7 @@ export default function ProcessingLoader({ currentStep, journal, filename }) {
       <div className="space-y-1.5">
         <div className="w-full bg-gray-800 rounded-full h-1.5">
           <div
-            className="h-1.5 rounded-full bg-blue-500 transition-all duration-700"
+            className="h-1.5 rounded-full bg-orange-500 transition-all duration-700"
             style={{ width: `${progressPct}%` }}
           />
         </div>

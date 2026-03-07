@@ -76,7 +76,7 @@ function Confetti() {
     canvas.width = canvas.offsetWidth
     canvas.height = canvas.offsetHeight
 
-    const colors = ['#F97316', '#2563EB', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899']
+    const colors = ['#F97316', '#FB923C', '#F59E0B', '#EA580C', '#FBBF24', '#C2410C']
     const particles = Array.from({ length: 80 }, () => ({
       x: canvas.width / 2 + (Math.random() - 0.5) * 100,
       y: canvas.height / 2,

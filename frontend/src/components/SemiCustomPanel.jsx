@@ -65,11 +65,12 @@ const FIELDS = [
     label: 'Reference Style',
     type: 'select',
     options: [
-      { value: 'ieee', label: 'IEEE' },
-      { value: 'apa', label: 'APA' },
-      { value: 'mla', label: 'MLA' },
-      { value: 'chicago', label: 'Chicago' },
+      { value: 'ieee',      label: 'IEEE (Numbered)' },
+      { value: 'apa',       label: 'APA 7th' },
+      { value: 'mla',       label: 'MLA' },
+      { value: 'chicago',   label: 'Chicago' },
       { value: 'vancouver', label: 'Vancouver' },
+      { value: 'springer',  label: 'Springer' },
     ],
   },
   {
@@ -101,19 +102,20 @@ function resolveHeadingNumbering(rules) {
   return h1 // "roman", "numeric", "alpha" match our enum
 }
 
-// Map journal references ordering to our reference style values
+// Map journal name to our reference style enum
 function resolveReferenceStyle(rules) {
-  const name = rules?.style_name?.toLowerCase() || ''
-  if (name.includes('ieee')) return 'ieee'
-  if (name.includes('apa')) return 'apa'
-  if (name.includes('chicago')) return 'chicago'
-  if (name.includes('vancouver')) return 'vancouver'
-  if (name.includes('springer')) return 'ieee' // Springer uses numbered like IEEE
+  const name = (rules?.style_name || '').toLowerCase()
+  if (name.includes('ieee'))       return 'ieee'
+  if (name.includes('apa'))        return 'apa'
+  if (name.includes('chicago'))    return 'chicago'
+  if (name.includes('vancouver'))  return 'vancouver'
+  if (name.includes('springer'))   return 'springer'
   return undefined
 }
 
 export default function SemiCustomPanel({ journal, overrides, onChange }) {
   const [defaults, setDefaults] = useState({})
+  const [rulesData, setRulesData] = useState({})   // full API response (style_name etc.)
   const [loading, setLoading] = useState(false)
 
   // Fetch journal defaults when journal changes
@@ -123,6 +125,7 @@ export default function SemiCustomPanel({ journal, overrides, onChange }) {
     axios.get(`${API}/journal-defaults/${encodeURIComponent(journal)}`)
       .then(res => {
         setDefaults(res.data.defaults || {})
+        setRulesData(res.data)   // keep style_name for resolveReferenceStyle()
       })
       .catch(err => {
         console.warn('Failed to load journal defaults:', err.message)
@@ -131,9 +134,16 @@ export default function SemiCustomPanel({ journal, overrides, onChange }) {
   }, [journal])
 
   const getDefault = (fieldDef) => {
-    // Try the API defaults first
+    // Try the direct API defaults first (e.g. abstract.max_words, document.font, etc.)
     const apiDefault = defaults[fieldDef.key]
     if (apiDefault !== undefined && apiDefault !== null) return apiDefault
+
+    // Special case: references.style is not a direct field in the rules JSONs.
+    // Derive it from style_name (returned by the API alongside defaults).
+    if (fieldDef.key === 'references.style') {
+      return resolveReferenceStyle(rulesData)
+    }
+
     return undefined
   }
 

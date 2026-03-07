@@ -513,9 +513,39 @@ const JOURNAL_META = [
 ]
 
 const MODES = [
-  { id: 'standard',    label: 'Standard',    desc: 'Apply predefined journal rules as-is' },
-  { id: 'semi_custom', label: 'Semi Custom', desc: 'Journal rules + your custom tweaks' },
-  { id: 'full_custom', label: 'Full Custom', desc: 'Upload your own guidelines document' },
+  {
+    id: 'standard',
+    label: 'Standard',
+    desc: 'Apply predefined journal rules as-is',
+    icon: (
+      <svg width="22" height="22" fill="none" viewBox="0 0 24 24">
+        <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+        <rect x="9" y="3" width="6" height="4" rx="1.5" stroke="currentColor" strokeWidth="1.8"/>
+        <path d="M9 12h6M9 16h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+      </svg>
+    ),
+  },
+  {
+    id: 'semi_custom',
+    label: 'Semi Custom',
+    desc: 'Journal rules + your own adjustments',
+    icon: (
+      <svg width="22" height="22" fill="none" viewBox="0 0 24 24">
+        <path d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+      </svg>
+    ),
+  },
+  {
+    id: 'full_custom',
+    label: 'Full Custom',
+    desc: 'Upload your own guidelines document',
+    icon: (
+      <svg width="22" height="22" fill="none" viewBox="0 0 24 24">
+        <path d="M4 16l4-4 4 4 4-8 4 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+        <circle cx="18" cy="6" r="2" stroke="currentColor" strokeWidth="1.8"/>
+      </svg>
+    ),
+  },
 ]
 
 // ─── Main App ──────────────────────────────────────────
@@ -740,7 +770,8 @@ export default function App() {
   }
 
   const isToolView = ['tool','pre-check','loading','success','error'].includes(view)
-  const canSubmit = !!docId && !!journal && !uploading && !extracting
+  const journalOk = selectedMode === 'full_custom' ? true : !!journal
+  const canSubmit = !!docId && journalOk && !uploading && !extracting
     && (selectedMode !== 'full_custom' || !!guidelineFile)
 
   return (
@@ -808,51 +839,88 @@ export default function App() {
                 </div>
               )}
 
-              {/* Step 2: Journal Selection */}
-              <div className="step-box">
-                <label className="form-label" style={{ marginBottom:12, display:'block' }}>Target Format</label>
-                {JOURNAL_META.map(j => (
-                  <label
-                    key={j.id}
-                    className={`journal-option-row ${journal === j.id ? 'selected' : ''}`}
-                    style={{ marginBottom:8 }}
-                  >
-                    <span style={{ display:'flex', alignItems:'center' }}>
-                      <input
-                        type="radio" name="journal" value={j.id}
-                        checked={journal === j.id}
-                        onChange={() => setJournal(j.id)}
-                      />
-                      <span className="journal-label">{j.label}</span>
-                    </span>
-                    {j.updated && (
-                      <span className="journal-updated">Updated {j.updated}</span>
-                    )}
-                  </label>
-                ))}
-              </div>
+
+              {/* Step 2: Journal Selection — hidden in Full Custom (guidelines replace preset) */}
+              {selectedMode !== 'full_custom' ? (
+                <div className="step-box">
+                  <label className="form-label" style={{ marginBottom:12, display:'block' }}>Target Format</label>
+                  {JOURNAL_META.map(j => (
+                    <label
+                      key={j.id}
+                      className={`journal-option-row ${journal === j.id ? 'selected' : ''}`}
+                      style={{ marginBottom:8 }}
+                    >
+                      <span style={{ display:'flex', alignItems:'center' }}>
+                        <input
+                          type="radio" name="journal" value={j.id}
+                          checked={journal === j.id}
+                          onChange={() => setJournal(j.id)}
+                        />
+                        <span className="journal-label">{j.label}</span>
+                      </span>
+                      {j.updated && (
+                        <span className="journal-updated">Updated {j.updated}</span>
+                      )}
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <div className="step-box" style={{
+                  background: 'var(--orange-light)',
+                  border: '1.5px solid rgba(249,115,22,0.3)',
+                  display: 'flex', alignItems: 'flex-start', gap: 12,
+                }}>
+                  <span style={{ fontSize: '1.4rem', lineHeight: 1 }}>📄</span>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--orange)', marginBottom: 4 }}>
+                      Full Custom — Journal Format Not Required
+                    </div>
+                    <div style={{ fontSize: '0.82rem', color: '#c05a0e', lineHeight: 1.5 }}>
+                      Your uploaded guidelines document will define all formatting rules.
+                      No journal preset will be applied.
+                    </div>
+                  </div>
+                </div>
+              )}
+
 
               {/* Step 3: Mode Selection */}
-              {journal && (
+              {(journal || selectedMode === 'full_custom') && (
                 <div className="step-box">
-                  <label className="form-label" style={{ marginBottom:12, display:'block' }}>Formatting Mode</label>
-                  <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                  <label className="form-label" style={{ marginBottom: 14, display: 'block' }}>
+                    Formatting Mode
+                  </label>
+
+                  <div className="mode-cards-grid">
                     {MODES.map(m => (
                       <button
                         key={m.id}
-                        className={`yn-btn ${selectedMode === m.id ? 'selected' : ''}`}
+                        className={`mode-card${selectedMode === m.id ? ' mode-card--selected' : ''}`}
                         onClick={() => setSelectedMode(m.id)}
-                        style={{ flex:1, minWidth:130, textAlign:'center', padding:'10px 14px' }}
+                        type="button"
                       >
-                        <div style={{ fontWeight:700, fontSize:'0.88rem' }}>{m.label}</div>
-                        <div style={{ fontSize:'0.72rem', color:'var(--text-secondary)', marginTop:2 }}>{m.desc}</div>
+                        {/* Animated checkmark — only visible when selected */}
+                        <span className="mode-card__check">
+                          <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                            <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                        </span>
+
+                        {/* Icon circle */}
+                        <div className="mode-card__icon">{m.icon}</div>
+
+                        {/* Label */}
+                        <div className="mode-card__label">{m.label}</div>
+
+                        {/* Description */}
+                        <div className="mode-card__desc">{m.desc}</div>
                       </button>
                     ))}
                   </div>
 
                   {/* Semi Custom: Structured override controls */}
                   {selectedMode === 'semi_custom' && (
-                    <div style={{ marginTop:14 }}>
+                    <div style={{ marginTop: 14 }}>
                       <SemiCustomPanel
                         journal={journal}
                         overrides={overrides}
@@ -863,14 +931,14 @@ export default function App() {
 
                   {/* Full Custom: Guidelines PDF upload */}
                   {selectedMode === 'full_custom' && (
-                    <div style={{ marginTop:14 }}>
-                      <label className="form-label" style={{ marginBottom:8, display:'block', fontSize:'0.85rem' }}>
+                    <div style={{ marginTop: 14 }}>
+                      <label className="form-label" style={{ marginBottom: 8, display: 'block', fontSize: '0.85rem' }}>
                         Upload Guidelines Document
                       </label>
                       <div
                         style={{
-                          border:'2px dashed var(--border)', borderRadius:'var(--radius)',
-                          padding:'20px', textAlign:'center', cursor:'pointer',
+                          border: '2px dashed var(--border)', borderRadius: 'var(--radius)',
+                          padding: '20px', textAlign: 'center', cursor: 'pointer',
                           background: guidelineFile ? 'rgba(34,197,94,0.05)' : 'transparent',
                           borderColor: guidelineFile ? 'var(--success)' : 'var(--border)',
                         }}
@@ -880,18 +948,18 @@ export default function App() {
                           id="guideline-upload"
                           type="file"
                           accept=".pdf,.docx,.txt"
-                          style={{ display:'none' }}
+                          style={{ display: 'none' }}
                           onChange={(e) => {
                             const f = e.target.files[0]
                             if (f) setGuidelineFile(f)
                           }}
                         />
                         {guidelineFile ? (
-                          <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:8 }}>
-                            <span style={{ color:'var(--success)' }}>{Icons.check}</span>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                            <span style={{ color: 'var(--success)' }}>{Icons.check}</span>
                             <span>{guidelineFile.name}</span>
                             <button
-                              style={{ background:'none', border:'none', color:'var(--error)', cursor:'pointer', fontSize:'0.82rem' }}
+                              style={{ background: 'none', border: 'none', color: 'var(--error)', cursor: 'pointer', fontSize: '0.82rem' }}
                               onClick={(e) => { e.stopPropagation(); setGuidelineFile(null) }}
                             >
                               Remove
@@ -899,10 +967,10 @@ export default function App() {
                           </div>
                         ) : (
                           <>
-                            <p style={{ margin:0, color:'var(--text-secondary)', fontSize:'0.85rem' }}>
+                            <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
                               Drop your guidelines PDF/DOCX here, or click to browse
                             </p>
-                            <div className="format-pills" style={{ marginTop:8, justifyContent:'center' }}>
+                            <div className="format-pills" style={{ marginTop: 8, justifyContent: 'center' }}>
                               <span className="format-pill">PDF</span>
                               <span className="format-pill">DOCX</span>
                               <span className="format-pill">TXT</span>
@@ -914,6 +982,7 @@ export default function App() {
                   )}
                 </div>
               )}
+
 
               {/* Submit */}
               <button

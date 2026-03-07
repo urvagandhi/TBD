@@ -1111,27 +1111,27 @@ async def get_format_result(job_id: str) -> JSONResponse:
 # GET /download/{filename} — Download formatted DOCX or PDF
 # ---------------------------------------------------------------------------
 def _convert_docx_to_pdf(docx_path: Path) -> Path:
-    """Convert DOCX to PDF using LibreOffice headless. Returns path to PDF."""
+    """Convert DOCX to PDF using docx2pdf (requires MS Word on Windows). Returns path to PDF."""
+    import platform
+    if platform.system() != "Windows" and platform.system() != "Darwin":
+        raise RuntimeError("PDF conversion via docx2pdf requires Windows or macOS with MS Word installed.")
+
     pdf_path = docx_path.with_suffix(".pdf")
     if pdf_path.exists():
         return pdf_path
+    
     try:
-        result = subprocess.run(
-            ["libreoffice", "--headless", "--convert-to", "pdf",
-             "--outdir", str(docx_path.parent), str(docx_path)],
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode != 0:
-            logger.warning("[PDF] LibreOffice conversion failed: %s", result.stderr)
-            raise RuntimeError(f"PDF conversion failed: {result.stderr[:200]}")
+        from docx2pdf import convert
+        convert(str(docx_path), str(pdf_path))
         if not pdf_path.exists():
-            raise RuntimeError("PDF file was not created by LibreOffice.")
+            raise RuntimeError("PDF file was not created by docx2pdf.")
         logger.info("[PDF] Converted %s → %s", docx_path.name, pdf_path.name)
         return pdf_path
-    except FileNotFoundError:
-        raise RuntimeError("LibreOffice not installed. Cannot convert to PDF.")
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("PDF conversion timed out.")
+    except ImportError:
+        raise RuntimeError("docx2pdf is not installed. Run `pip install docx2pdf`.")
+    except Exception as e:
+        logger.warning("[PDF] docx2pdf conversion failed: %s", e)
+        raise RuntimeError(f"PDF conversion failed: {str(e)[:200]}")
 
 
 @app.get("/download/{filepath:path}")
