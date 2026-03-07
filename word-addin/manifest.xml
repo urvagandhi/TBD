@@ -19,7 +19,7 @@
   </Hosts>
 
   <DefaultSettings>
-    <SourceLocation DefaultValue="http://localhost:3001/" />
+    <SourceLocation DefaultValue="https://localhost:3001/" />
   </DefaultSettings>
 
   <Permissions>ReadWriteDocument</Permissions>
@@ -68,13 +68,13 @@
 
     <Resources>
       <bt:Images>
-        <bt:Image id="icon16" DefaultValue="http://localhost:3001/icon-16.png" />
-        <bt:Image id="icon32" DefaultValue="http://localhost:3001/icon-32.png" />
-        <bt:Image id="icon80" DefaultValue="http://localhost:3001/icon-80.png" />
+        <bt:Image id="icon16" DefaultValue="https://localhost:3001/icon-16.png" />
+        <bt:Image id="icon32" DefaultValue="https://localhost:3001/icon-32.png" />
+        <bt:Image id="icon80" DefaultValue="https://localhost:3001/icon-80.png" />
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="taskpaneUrl" DefaultValue="http://localhost:3001/" />
-        <bt:Url id="learnMoreUrl" DefaultValue="http://localhost:3001/" />
+        <bt:Url id="taskpaneUrl" DefaultValue="https://localhost:3001/" />
+        <bt:Url id="learnMoreUrl" DefaultValue="https://localhost:3001/" />
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="getStartedTitle" DefaultValue="Agent Paperpal" />
