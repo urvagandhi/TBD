@@ -158,7 +158,7 @@ export default function ProcessingLoader({ currentStep, journal, filename }) {
       <p className={`text-center text-xs transition-colors duration-500 ${showLongWaitMsg ? "text-yellow-600" : "text-gray-700"}`}>
         {showLongWaitMsg
           ? "Taking longer than usual. Large papers require more time..."
-          : "This typically takes 40–60 seconds. Please wait..."}
+          : "This typically takes a few minutes. Please wait..."}
       </p>
 
     </div>
