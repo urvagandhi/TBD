@@ -180,10 +180,21 @@ def _run_pipeline_job(
         }
     except Exception as e:
         logger.exception("[JOB:%s] Background pipeline failed: %s", job_id, e)
+        error_msg = str(e)
+        
+        # Intercept Gemini / LiteLLM Rate Limit Errors to provide a clean message
+        if "429" in error_msg or "RateLimitError" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+            error_msg = (
+                "Google Gemini API Quota Exceeded.\n\n"
+                "The free tier limits requests to 15 per minute, and formatting "
+                "a paper consumes multiple AI pipeline requests.\n\n"
+                "Please wait 60 seconds and click 'Retry Formatting'."
+            )
+            
         JOB_STORE[job_id] = {
             "status": "error",
             "progress": 0,
-            "error": str(e),
+            "error": error_msg,
             "created_at": JOB_STORE[job_id].get("created_at", time.time()),
         }
 
