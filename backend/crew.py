@@ -1686,6 +1686,33 @@ def _normalize_section_types(sections: list) -> list:
     return normalized
 
 
+def _save_paragraph_map(docx_path: str) -> None:
+    """
+    Save a JSON paragraph map alongside the DOCX for surgical editing.
+    Maps each paragraph index to its text, style, and run-level formatting
+    so /rebuild-docx can diff and patch without going through mammoth.
+    """
+    try:
+        from docx import Document as _Doc
+        doc = _Doc(docx_path)
+        para_map = []
+        for i, para in enumerate(doc.paragraphs):
+            text = para.text
+            if not text.strip():
+                continue
+            para_map.append({
+                "index": i,
+                "text": text,
+                "style": para.style.name if para.style else "Normal",
+            })
+        map_path = docx_path.replace(".docx", "_paramap.json")
+        with open(map_path, "w", encoding="utf-8") as f:
+            json.dump(para_map, f, ensure_ascii=False)
+        logger.info("[PARAMAP] Saved %d paragraphs → %s", len(para_map), map_path)
+    except Exception as e:
+        logger.warning("[PARAMAP] Failed to save paragraph map: %s", e)
+
+
 def _write_docx_from_transform(
     transform_raw: str,
     rules: dict,
@@ -1743,6 +1770,7 @@ def _write_docx_from_transform(
         logger.info("[DOCX] APA format — using build_apa_docx — %d sections → %s",
                     len(sections), output_filename)
         build_apa_docx(transform_data, output_path, image_store=image_store, table_store=table_store)
+        _save_paragraph_map(output_path)
         return output_filename
 
     # ── Path B: IEEE → build_ieee_docx (flat sections, 2-column, 10pt) ──
@@ -1766,6 +1794,7 @@ def _write_docx_from_transform(
         logger.info("[DOCX] IEEE format — using build_ieee_docx — %d sections → %s",
                     len(docx_instructions["sections"]), output_filename)
         build_ieee_docx(docx_instructions, output_path, image_store=image_store, table_store=table_store)
+        _save_paragraph_map(output_path)
         return output_filename
 
     # ── Path C: Springer → build_springer_docx (10pt, single spacing, justified) ──
@@ -1787,6 +1816,7 @@ def _write_docx_from_transform(
         logger.info("[DOCX] Springer format — using build_springer_docx — %d sections → %s",
                     len(docx_instructions["sections"]), output_filename)
         build_springer_docx(docx_instructions, output_path, image_store=image_store, table_store=table_store)
+        _save_paragraph_map(output_path)
         return output_filename
 
     # ── Path D: Chicago → build_chicago_docx (12pt, double spacing, left-aligned) ──
@@ -1808,6 +1838,7 @@ def _write_docx_from_transform(
         logger.info("[DOCX] Chicago format — using build_chicago_docx — %d sections → %s",
                     len(docx_instructions["sections"]), output_filename)
         build_chicago_docx(docx_instructions, output_path, image_store=image_store, table_store=table_store)
+        _save_paragraph_map(output_path)
         return output_filename
 
     # ── Path E: Vancouver → build_vancouver_docx (12pt, double spacing, numbered citations) ──
@@ -1829,6 +1860,7 @@ def _write_docx_from_transform(
         logger.info("[DOCX] Vancouver format — using build_vancouver_docx — %d sections → %s",
                     len(docx_instructions["sections"]), output_filename)
         build_vancouver_docx(docx_instructions, output_path, image_store=image_store, table_store=table_store)
+        _save_paragraph_map(output_path)
         return output_filename
 
     # ── Path F: DOCX source with in-place transformation (preserves figures/tables) ──
@@ -1837,6 +1869,7 @@ def _write_docx_from_transform(
         logger.info("[DOCX] In-place transformation (style=%s) — source=%s → %s",
                     style_key, Path(source_docx_path).name, output_filename)
         transform_docx_in_place(source_docx_path, transform_data, rules, output_path)
+        _save_paragraph_map(output_path)
         return output_filename
 
     # ── Path G: Generic PDF/TXT source — rebuild from extracted text ──
@@ -1860,4 +1893,5 @@ def _write_docx_from_transform(
     logger.info("[DOCX] Generic format — using write_formatted_docx — %d sections → %s",
                 len(docx_instructions["sections"]), output_filename)
     write_formatted_docx(docx_instructions, output_path, image_store=image_store, table_store=table_store)
+    _save_paragraph_map(output_path)
     return output_filename

@@ -723,6 +723,33 @@ export default function App() {
     finally { setDownloading(false) }
   }
 
+  // Download the edited version — sends HTML to backend for proper DOCX rebuild
+  const handleDownloadEdited = async (editedHtml, type = 'doc') => {
+    if (!editedHtml) return
+    setDownloading(true); setDlType(type)
+    try {
+      // Extract the original filepath from download_url (e.g. "/download/run_xxx/formatted.docx" → "run_xxx/formatted.docx")
+      const originalFilepath = result?.download_url?.replace('/download/', '') || ''
+      const res = await axios.post(`${API}/rebuild-docx`, {
+        html: editedHtml,
+        original_filepath: originalFilepath,
+        format: type === 'pdf' ? 'pdf' : 'docx',
+      }, { responseType: 'blob', timeout: 30000 })
+
+      const mime = type === 'pdf'
+        ? 'application/pdf'
+        : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      const ext = type === 'pdf' ? 'pdf' : 'docx'
+      const blob = new Blob([res.data], { type: mime })
+      const href = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = href; a.setAttribute('download', `edited_paper.${ext}`)
+      document.body.appendChild(a); a.click(); a.remove()
+      window.URL.revokeObjectURL(href)
+    } catch { alert('Download of edited document failed.') }
+    finally { setDownloading(false) }
+  }
+
   const resetToTool = () => {
     setView('tool'); setFile(null); setDocId(null); setUploadInfo(null)
     setJournal(''); setResult(null); setError('')
@@ -962,6 +989,7 @@ export default function App() {
           result={result}
           trustScore={trustScore}
           onDownload={handleDownload}
+          onDownloadEdited={handleDownloadEdited}
           downloading={downloading}
           dlType={dlType}
           onReset={resetToTool}

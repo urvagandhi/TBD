@@ -1,7 +1,15 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import LiveDocumentEditor from './LiveDocumentEditor'
 
 const API = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
+
+// ── Edit icon ───────────────────────────────────────────────
+const IconEdit = () => (
+  <svg width="15" height="15" fill="none" viewBox="0 0 24 24">
+    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    <path d="M18.5 2.5a2.121 2.121 0 113 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
 
 // ── Icons ────────────────────────────────────────────────────
 const IconCheck = () => (
@@ -136,9 +144,12 @@ function DownloadDropdown({ onDownload, downloading, dlType }) {
 }
 
 // ── Main Results Screen ──────────────────────────────────────
-export default function ResultsScreen({ result, trustScore, onDownload, downloading, dlType, onReset }) {
+export default function ResultsScreen({ result, trustScore, onDownload, onDownloadEdited, downloading, dlType, onReset }) {
   const [reportTab, setReportTab] = useState('done')
   const [mobileTab, setMobileTab] = useState('score') // mobile: 'preview' | 'score'
+  const [editing, setEditing] = useState(false)
+  const [hasEdits, setHasEdits] = useState(false)
+  const iframeRef = useRef(null)
 
   const report = result.compliance_report || {}
   const applied = report.applied_transformations || report.changes_made || []
@@ -151,6 +162,36 @@ export default function ResultsScreen({ result, trustScore, onDownload, download
 
   const totalChanges = applied.length + skipped.length + manual.length
   const autoPct = totalChanges > 0 ? Math.round((applied.length / totalChanges) * 100) : 100
+
+  // Toggle contenteditable in the iframe
+  const toggleEdit = useCallback(() => {
+    const newEditing = !editing
+    setEditing(newEditing)
+    if (iframeRef.current?.contentWindow) {
+      iframeRef.current.contentWindow.postMessage(
+        { type: 'SET_EDITABLE', editable: newEditing }, '*'
+      )
+    }
+    if (newEditing) setHasEdits(true)
+  }, [editing])
+
+  // Request edited HTML from iframe, then call parent's download handler
+  const handleDownloadEdited = useCallback((type = 'doc') => {
+    if (!iframeRef.current?.contentWindow) return
+
+    const handler = (e) => {
+      if (e.data?.type === 'EDITED_HTML') {
+        window.removeEventListener('message', handler)
+        onDownloadEdited(e.data.html, type)
+      }
+    }
+    window.addEventListener('message', handler)
+
+    iframeRef.current.contentWindow.postMessage({ type: 'GET_HTML' }, '*')
+
+    // Timeout cleanup
+    setTimeout(() => window.removeEventListener('message', handler), 5000)
+  }, [onDownloadEdited])
 
   const REPORT_TABS = [
     { id: 'done', label: 'Done', icon: <IconCheck />, count: applied.length, color: 'rs-tab-green' },
@@ -178,7 +219,21 @@ export default function ResultsScreen({ result, trustScore, onDownload, download
             </svg>
             New Paper
           </button>
-          <DownloadDropdown onDownload={onDownload} downloading={downloading} dlType={dlType} />
+          {result.preview_url && (
+            <button
+              className={`rs-edit-btn ${editing ? 'active' : ''}`}
+              onClick={toggleEdit}
+              title={editing ? 'Exit edit mode' : 'Edit document'}
+            >
+              <IconEdit />
+              {editing ? 'Stop Editing' : 'Edit'}
+            </button>
+          )}
+          {hasEdits ? (
+            <DownloadDropdown onDownload={handleDownloadEdited} downloading={downloading} dlType={dlType} />
+          ) : (
+            <DownloadDropdown onDownload={onDownload} downloading={downloading} dlType={dlType} />
+          )}
         </div>
       </div>
 
@@ -207,6 +262,7 @@ export default function ResultsScreen({ result, trustScore, onDownload, download
             <div className="rs-preview-frame" id="viewer-panel">
               {result.preview_url ? (
                 <iframe
+                  ref={iframeRef}
                   src={`${API}${result.preview_url}`}
                   className="rs-preview-iframe"
                   title="Formatted Paper Preview"
