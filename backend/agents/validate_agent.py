@@ -516,6 +516,6 @@ def create_validate_agent(llm: Any, journal_style: str = "APA 7th Edition") -> A
         llm=llm,
         allow_delegation=False,
         verbose=True,
-        max_iter=3,
+        max_iter=1,
         max_tokens=65536,
     )

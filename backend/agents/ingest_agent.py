@@ -194,6 +194,6 @@ def create_ingest_agent(llm: Any) -> Agent:
         llm=llm,
         allow_delegation=False,
         verbose=True,
-        max_iter=3,
+        max_iter=1,
         max_tokens=65536,
     )

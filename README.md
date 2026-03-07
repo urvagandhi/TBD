@@ -2,7 +2,7 @@
 
 > Autonomous manuscript formatting system built for HackaMined 2026 — Cactus Communications (Paperpal by Editage) track.
 
-Agent Paperpal is a full-stack AI application that accepts a research paper (PDF or DOCX) and a target journal style, then autonomously detects every formatting violation, applies corrections, generates a formatted DOCX output, and produces a scored compliance report — all powered by a 4-agent CrewAI pipeline backed by Google Gemini 2.5 Flash.
+Agent Paperpal is a full-stack AI application that accepts a research paper (PDF or DOCX) and a target journal style, then autonomously detects every formatting violation, applies corrections, generates a formatted DOCX output, and produces a scored compliance report — all powered by a 5-agent CrewAI pipeline backed by Google Gemini 2.5 Flash. Available as both a standalone web app and a Microsoft Word Add-in.
 
 ---
 
@@ -40,7 +40,7 @@ Agent Paperpal eliminates manual formatting effort through a multi-agent AI pipe
 1. **Ingests** raw PDF/DOCX content and labels every structural element
 2. **Parses** the paper into a structured JSON schema
 3. **Interprets** the target journal's formatting rules from a curated rules library
-4. **Transforms** the paper by applying all required fixes
+4. **Transforms** the paper by applying all required fixes and generating DOCX instructions
 5. **Validates** compliance across 7 dimensions and scores from 0-100
 
 ### Key Features
@@ -49,18 +49,20 @@ Agent Paperpal eliminates manual formatting effort through a multi-agent AI pipe
 |---------|-------------|
 | Multi-format input | Upload PDF or DOCX (up to 10 MB) |
 | 5 journal styles | APA 7th Edition, IEEE, Vancouver, Springer, Chicago 17th |
-| 4-agent AI pipeline | Sequential CrewAI agents; Transform agent runs inline violation scan (Phase A) + formatting (Phase B) |
-| Compliance scoring | 7-section weighted breakdown (Document Format 18%, Abstract 12%, Headings 13%, Citations 22%, References 22%, Figures 6.5%, Tables 6.5%) |
+| 3 formatting modes | Standard (defaults), Semi-Custom (override 13 fields), Full-Custom (upload guidelines PDF) |
+| 5-agent AI pipeline | Sequential CrewAI agents: INGEST, PARSE, INTERPRET, TRANSFORM, VALIDATE |
+| Pre-format scoring | Quick compliance score before running the full pipeline |
+| Compliance scoring | 7-section weighted breakdown (Citations 25%, References 25%, Headings 15%, Document 10%, Abstract 10%, Figures 7.5%, Tables 7.5%) |
 | Deterministic checks | 7 Python-exact checks override LLM scores: abstract word count, citation format, reference ordering, citation consistency, DOI format, et al. period, ampersand usage |
-| Figure & table extraction | Side-channel binary media extraction (PyMuPDF for PDF images, pdfplumber for PDF tables, python-docx for DOCX media) — bypasses LLM, injected at DOCX write time |
+| Style-specific DOCX builders | Dedicated builders for APA, IEEE, Springer, Chicago, Vancouver (correct column layouts, heading styles, citation formats) |
+| Figure & table extraction | Side-channel binary media extraction (PyMuPDF for PDF images, pdfplumber for PDF tables, python-docx for DOCX media) — bypasses LLM |
+| Citation conversion | Automatic conversion between styles (e.g., numbered `[1]` to author-date `(Smith et al., 2020)`) |
 | IMRAD detection | Checks for Introduction, Methods, Results, Discussion presence |
-| APA heading levels 1-5 | Full H1-H5 hierarchy with inline rendering for H3-H5 (heading + body text in same paragraph per APA §2.27) |
-| DOCX output | Formatted manuscript ready for download; in-place transformation for DOCX inputs |
 | Pipeline caching | SHA-256 keyed in-memory cache — identical submissions return instantly |
-| Async processing | Files >500KB processed as background jobs; poll `/status/{job_id}` for results |
-| Verbatim content guard | 8A — filters empty sections, restores truncated abstract from original text |
-| Schema validation | 8B — jsonschema validates `docx_instructions` before DOCX write |
-| Rule references | Every applied change annotated with authoritative journal rule section |
+| Async processing | All formatting jobs run as background tasks; poll `/format/status/{job_id}` for progress |
+| Live document preview | DOCX-to-HTML preview via Mammoth with optional TipTap rich-text editing |
+| Word Add-in | Microsoft Word taskpane sidebar — format manuscripts without leaving Word |
+| PDF export | Optional PDF output via LibreOffice headless conversion |
 
 ### Target Users
 
@@ -74,56 +76,59 @@ Agent Paperpal eliminates manual formatting effort through a multi-agent AI pipe
 
 ```mermaid
 graph TB
-    subgraph User["User Browser"]
-        UI["React 18 SPA\nAgent Paperpal UI"]
+    subgraph User["User Interfaces"]
+        UI["React 19 SPA\nStandalone Web App"]
+        Addin["Word Add-in\nOffice.js Taskpane"]
     end
 
-    subgraph Frontend["Frontend Layer (Vite + TailwindCSS)"]
-        Proxy["Vite Dev Proxy\n/health /format /download"]
+    subgraph Frontend["Frontend Layer (Vite 7 + TailwindCSS 4)"]
+        Proxy["Vite Dev Proxy\n/api/* -> localhost:8000"]
     end
 
     subgraph Backend["Backend Layer (FastAPI)"]
         API["FastAPI Server\nport 8000"]
-        Validator["Input Validator\nExt + Size + Text Quality"]
-        Pipeline["run_pipeline()"]
+        Upload["POST /upload\nText extraction + doc_id"]
+        PreScore["POST /score/pre\nPre-format compliance"]
+        Format["POST /format\nAsync pipeline trigger"]
+        Status["GET /format/status\nProgress polling"]
+        Result["GET /format/result\nFinal results"]
+        Download["GET /download\nDOCX/PDF files"]
+        Preview["GET /preview\nHTML preview"]
     end
 
-    subgraph CrewAI["CrewAI 4-Agent Pipeline (Sequential)"]
+    subgraph CrewAI["CrewAI 5-Agent Pipeline (Sequential)"]
         A1["Agent 1: INGEST\nLabel content blocks"]
         A2["Agent 2: PARSE\nExtract paper_structure JSON"]
-        A4["Agent 3: TRANSFORM\nPhase A: scan violations\nPhase B: apply fixes + docx_instructions"]
-        A5["Agent 4: VALIDATE\n7 compliance checks + score"]
+        A3["Agent 3: INTERPRET\nLoad + analyze journal rules"]
+        A4["Agent 4: TRANSFORM\nScan violations + apply fixes"]
+        A5["Agent 5: VALIDATE\n7 compliance checks + score"]
     end
 
     subgraph Storage["Storage"]
-        Rules["rules/*.json\nJournal Rules Library"]
-        Outputs["outputs/\nFormatted DOCX files"]
-        Uploads["uploads/\nTemp upload files"]
+        Rules["rules/*.json\n5 Journal Rule Files"]
+        Outputs["outputs/run_*/\nPer-run folders"]
+        Uploads["uploads/\nTemp upload files (1h TTL)"]
+        Schemas["schemas/\nJSON validation schemas"]
     end
 
     subgraph LLM["AI Backend"]
-        Gemini["Google Gemini\ngemini-2.5-flash\ntemperature=0"]
+        Gemini["Google Gemini\n2.5 Flash\ntemperature=0"]
     end
 
-    UI -->|"POST /format\nmultipart file + journal"| Proxy
-    UI -->|"GET /health"| Proxy
+    UI -->|"HTTP"| Proxy
+    Addin -->|"HTTP via proxy"| Proxy
     Proxy --> API
-    API --> Validator
-    Validator --> Pipeline
-    Pipeline --> A1
+    API --> Upload & PreScore & Format & Status & Result & Download & Preview
+    Format --> A1
     A1 --> A2
     A2 --> A3
     A3 --> A4
     A4 --> A5
-    A1 <-->|"LLM calls"| Gemini
-    A2 <-->|"LLM calls"| Gemini
-    A4 <-->|"LLM calls"| Gemini
-    A5 <-->|"LLM calls"| Gemini
-    A4 -->|"load rules"| Rules
+    A1 & A2 & A4 & A5 <-->|"LLM calls"| Gemini
+    A3 -->|"load rules"| Rules
     A5 -->|"write DOCX"| Outputs
     API -->|"temp file"| Uploads
-    API -->|"GET /download/:file"| Outputs
-    Outputs -->|"FileResponse"| UI
+    Download -->|"FileResponse"| UI & Addin
 
     style User fill:#1e3a5f,color:#93c5fd
     style Frontend fill:#1a2e1a,color:#86efac
@@ -139,31 +144,31 @@ graph TB
 
 Agent Paperpal uses a **layered architecture** with a clear separation between:
 
-- **Presentation layer** — React SPA with a 4-state machine (`idle → loading → success → error`)
-- **API layer** — FastAPI with input validation, error mapping, and file lifecycle management
+- **Presentation layer** — React 19 SPA (standalone) + Word Add-in taskpane (Office.js)
+- **API layer** — FastAPI with input validation, error mapping, async job orchestration, and file lifecycle management
 - **Orchestration layer** — CrewAI `Crew` with `Process.sequential` ensuring strict agent ordering
 - **Agent layer** — 5 single-responsibility agents, each producing validated JSON output
-- **Tool layer** — PDF reader, DOCX reader, DOCX writer, rule loader, structured logger
-- **Storage layer** — Local filesystem (`rules/`, `uploads/`, `outputs/`)
+- **Tool layer** — PDF reader, DOCX reader/writer, rule loader/engine, compliance checker, media extractor, text chunker
+- **Storage layer** — Local filesystem (`rules/`, `uploads/`, `outputs/run_*/`, `schemas/`)
 
 ### Component Responsibilities
 
 | Component | Responsibility |
 |-----------|---------------|
-| `main.py` | HTTP routing, input validation (5 guards), async job routing, file cleanup |
-| `crew.py` | Pipeline orchestration, caching, section-aware context building, 8A/8B guards |
-| `agents/ingest_agent.py` | Label raw text blocks with structural type markers |
-| `agents/parse_agent.py` | Extract structured `paper_structure` JSON from labelled content |
-| `agents/transform_agent.py` | Phase A: inline violation scan; Phase B: apply fixes + `docx_instructions` |
-| `agents/validate_agent.py` | Run 7 compliance checks, score 0-100, return `compliance_report` |
-| `tools/docx_writer.py` | Write formatted DOCX — in-place (DOCX) or text-rebuild (PDF/TXT) |
-| `tools/rule_loader.py` | Load and cache `rules/*.json` files |
-| `tools/pdf_reader.py` | Extract text from PDF via PyMuPDF |
-| `tools/docx_reader.py` | Extract text from DOCX via python-docx |
-| `tools/text_chunker.py` | Split paper into IMRAD sections, compute word counts |
-| `tools/compliance_checker.py` | 7 deterministic compliance checks (Python-exact, overrides LLM scores) |
+| `main.py` | HTTP routing, input validation (5 guards), async job management via `BackgroundTasks`, file lifecycle, DOC_STORE + JOB_STORE |
+| `crew.py` | Pipeline orchestration, caching, section-aware context building, robust JSON extraction (8 fallback strategies), step timing, per-run output saving |
+| `agents/ingest_agent.py` | Label raw text blocks with structural type markers (TITLE, ABSTRACT, HEADING, CITATION, etc.) |
+| `agents/parse_agent.py` | Extract structured `paper_structure` JSON with metadata, authors, sections, citations, references |
+| `agents/interpret_agent.py` | Load journal rules from disk or URL, analyze critical formatting requirements |
+| `agents/transform_agent.py` | Compare paper vs rules, convert citations/references between styles, produce `docx_instructions` |
+| `agents/validate_agent.py` | Run 7 LLM compliance checks + 7 deterministic Python checks, score 0-100, produce `compliance_report` |
+| `tools/docx_writer.py` | 6 style-specific DOCX builders (APA, IEEE, Springer, Chicago, Vancouver, Generic) + in-place transformer |
+| `tools/compliance_checker.py` | 7 deterministic compliance checks (non-LLM, override LLM scores) |
 | `tools/media_extractor.py` | Side-channel image/table extraction from PDF/DOCX source files |
-| `tools/rule_extractor.py` | Web-based journal rule extraction via BeautifulSoup |
+| `tools/text_chunker.py` | Split paper into IMRAD sections, compute word counts |
+| `tools/rule_loader.py` | Load and cache `rules/*.json` files |
+| `engine/rule_engine.py` | 3-mode rule source: standard, semi-custom (user overrides), full-custom (PDF guidelines) |
+| `tools/pre_format_scorer.py` | Quick pre-pipeline compliance score (5 categories) |
 
 ---
 
@@ -171,20 +176,26 @@ Agent Paperpal uses a **layered architecture** with a clear separation between:
 
 | Layer | Technology | Version | Purpose |
 |-------|-----------|---------|---------|
-| Frontend | React | 18.3.1 | UI component library |
-| Frontend | Vite | 7.3.1 | Dev server + build tool + proxy |
-| Frontend | TailwindCSS | 3.4.3 | Utility-first dark-theme styling |
-| Frontend | Axios | 1.7.2 | HTTP client with proxy support |
-| Frontend | Lucide React | 0.378.0 | Icon library |
+| Frontend (Web) | React | 19.2.0 | UI component library |
+| Frontend (Web) | Vite | 7.3.1 | Dev server + build tool |
+| Frontend (Web) | TailwindCSS | 4.2.1 | Utility-first styling with design tokens |
+| Frontend (Web) | Axios | 1.13.6 | HTTP client |
+| Frontend (Web) | TipTap | 3.20.1 | Rich-text document editor for live preview |
+| Frontend (Web) | Tippy.js | 6.3.7 | Tooltip library for violation popups |
+| Word Add-in | React | 19.2.0 | Taskpane UI |
+| Word Add-in | Office.js | 1.x (CDN) | Word document read/write via Office API |
+| Word Add-in | Vite | 7.3.1 | HTTPS dev server + build |
 | Backend | Python | 3.11+ | Primary backend language |
 | Backend | FastAPI | 0.111.0 | Async HTTP API framework |
 | Backend | Uvicorn | 0.29.0 | ASGI server |
 | AI Orchestration | CrewAI | >=0.36.0 | Multi-agent pipeline framework |
-| AI Model | Google Gemini | 2.5-flash | LLM for all 4 agents |
-| Document Processing | PyMuPDF (fitz) | 1.24.0 | PDF text extraction |
-| Document Processing | python-docx | 1.1.0 | DOCX read and write |
+| AI Model | Google Gemini | 2.5 Flash | LLM for all 5 agents (temperature=0) |
+| Document Processing | PyMuPDF (fitz) | >=1.24.0 | PDF text + image extraction |
+| Document Processing | python-docx | 1.1.0 | DOCX read, write, in-place transform |
 | Document Processing | pdfplumber | >=0.10.0 | PDF table extraction |
-| Validation | jsonschema | >=4.0.0 | JSON schema validation |
+| Document Processing | Mammoth | >=1.6.0 | DOCX-to-HTML preview conversion |
+| Validation | jsonschema | >=4.0.0 | JSON schema validation for docx_instructions |
+| Web Scraping | BeautifulSoup4 | >=4.12.0 | Custom journal guidelines extraction from URLs |
 | Config | python-dotenv | >=1.0.0 | Environment variable management |
 
 ---
@@ -194,146 +205,236 @@ Agent Paperpal uses a **layered architecture** with a clear separation between:
 ```
 HACKa-MINed/
 │
-├── backend/                        # FastAPI + CrewAI backend
-│   ├── agents/                     # 5 CrewAI agent definitions
-│   │   ├── __init__.py             # Exports all 5 create_*_agent() factories
-│   │   ├── ingest_agent.py         # Agent 1: Content labelling
-│   │   ├── parse_agent.py          # Agent 2: Structure extraction
-│   │   ├── transform_agent.py      # Agent 3: Phase A scan + Phase B transform
-│   │   └── validate_agent.py       # Agent 4: Compliance scoring
+├── backend/                           # FastAPI + CrewAI backend
+│   ├── agents/                        # 5 CrewAI agent definitions
+│   │   ├── __init__.py                # Exports all create_*_agent() factories
+│   │   ├── ingest_agent.py            # Agent 1: Content labelling with structural markers
+│   │   ├── parse_agent.py             # Agent 2: Structured JSON extraction
+│   │   ├── interpret_agent.py         # Agent 3: Journal rule analysis
+│   │   ├── transform_agent.py         # Agent 4: Citation conversion + DOCX instructions
+│   │   └── validate_agent.py          # Agent 5: 7-check compliance scoring
 │   │
-│   ├── engine/                     # Formatting engine utilities
-│   │   └── format_engine.py        # Document formatting helpers
+│   ├── engine/                        # Formatting engine utilities
+│   │   ├── format_engine.py           # FormatEngine wrapper for rules access
+│   │   └── rule_engine.py             # 3-mode rule source (standard/semi/full)
 │   │
-│   ├── tools/                      # Shared utility tools
-│   │   ├── pdf_reader.py           # PDF text extraction (PyMuPDF)
-│   │   ├── docx_reader.py          # DOCX text extraction (python-docx)
-│   │   ├── docx_writer.py          # Formatted DOCX generation (in-place + rebuild)
-│   │   ├── rule_loader.py          # Journal rules JSON loader + JOURNAL_MAP
-│   │   ├── text_chunker.py         # IMRAD section splitter + word count stats
-│   │   ├── compliance_checker.py   # 7 deterministic compliance checks (Python-exact)
-│   │   ├── media_extractor.py      # Side-channel image/table extraction (PDF/DOCX)
-│   │   ├── rule_extractor.py       # Web-based journal rule extraction (BeautifulSoup)
-│   │   ├── logger.py               # Structured logger factory (get_logger)
-│   │   └── tool_errors.py          # Custom exception hierarchy
+│   ├── tools/                         # Shared utility tools
+│   │   ├── pdf_reader.py              # PDF text extraction + scan detection + header stripping
+│   │   ├── docx_reader.py             # DOCX text + structured extraction (styles, bold, italic)
+│   │   ├── docx_writer.py             # 6 style-specific DOCX builders + in-place transformer
+│   │   ├── rule_loader.py             # Journal rules JSON loader + JOURNAL_MAP + cache
+│   │   ├── rule_extractor.py          # URL-based journal rule extraction (BeautifulSoup)
+│   │   ├── text_chunker.py            # IMRAD section splitter + word count stats
+│   │   ├── compliance_checker.py      # 7 deterministic compliance checks (Python-exact)
+│   │   ├── media_extractor.py         # Side-channel image/table extraction (PDF/DOCX)
+│   │   ├── pre_format_scorer.py       # Quick pre-pipeline compliance scoring (5 categories)
+│   │   ├── logger.py                  # Structured logger factory (get_logger)
+│   │   └── tool_errors.py             # Custom exception hierarchy (7 exception types)
 │   │
-│   ├── rules/                      # Journal formatting rules (JSON)
-│   │   ├── apa7.json               # APA 7th Edition rules
-│   │   ├── ieee.json               # IEEE rules
-│   │   ├── vancouver.json          # Vancouver rules
-│   │   ├── springer.json           # Springer rules
-│   │   └── chicago.json            # Chicago 17th Edition rules
+│   ├── schemas/                       # JSON schemas
+│   │   └── rules_schema.json          # Validation schema for journal rules
 │   │
-│   ├── outputs/                    # Generated DOCX files (auto-cleaned after 6h)
-│   ├── uploads/                    # Temp upload files (deleted after processing)
-│   ├── crew.py                     # Pipeline orchestration + caching
-│   ├── main.py                     # FastAPI app, endpoints, validation
-│   ├── requirements.txt            # Python dependencies
-│   ├── .env                        # Runtime secrets (not committed)
-│   └── .env.example                # Template for environment setup
+│   ├── rules/                         # Journal formatting rules (JSON)
+│   │   ├── apa7.json                  # APA 7th Edition rules
+│   │   ├── ieee.json                  # IEEE rules
+│   │   ├── vancouver.json             # Vancouver / ICMJE rules
+│   │   ├── springer.json              # Springer Nature rules
+│   │   └── chicago.json               # Chicago 17th Edition rules
+│   │
+│   ├── outputs/                       # Per-run output folders (auto-cleaned after 6h)
+│   │   └── run_<id>/                  # Contains agent outputs + formatted DOCX/PDF
+│   │
+│   ├── uploads/                       # Temp upload files (1h TTL, auto-cleaned)
+│   ├── crew.py                        # Pipeline orchestration + caching + JSON extraction
+│   ├── main.py                        # FastAPI app: 9 endpoints, validation, job management
+│   ├── requirements.txt               # Python dependencies
+│   ├── .env.example                   # Environment variable template
+│   └── README.md                      # Backend documentation
 │
-├── frontend/                       # React 18 + Vite frontend
+├── frontend/                          # React 19 + Vite 7 standalone web app
 │   ├── src/
-│   │   ├── components/             # UI components
-│   │   │   ├── Upload.jsx          # File + journal selector form
-│   │   │   ├── ProcessingLoader.jsx # 5-step pipeline progress UI
-│   │   │   ├── ComplianceScore.jsx  # Score dashboard with animated bars
-│   │   │   ├── ChangesList.jsx      # Applied changes with expand/collapse
-│   │   │   ├── ViolationsDetected.jsx # Phase A violations from transform agent
-│   │   │   └── IMRADCheck.jsx       # IMRAD structure status pills
-│   │   ├── App.jsx                  # Root: 4-state machine + layout
-│   │   ├── index.css               # Tailwind base + keyframes + utilities
-│   │   └── main.jsx                # React DOM entry point
+│   │   ├── components/                # 14 React components
+│   │   │   ├── Upload.jsx             # Drag-and-drop file upload zone
+│   │   │   ├── ProgressScreen.jsx     # Real-time pipeline progress with polling
+│   │   │   ├── ResultsScreen.jsx      # 2-column results: preview + compliance score
+│   │   │   ├── SemiCustomPanel.jsx    # 13-field journal override configuration
+│   │   │   ├── GuidelinesUpload.jsx   # Custom guidelines PDF upload (full-custom mode)
+│   │   │   ├── LiveDocumentEditor.jsx # TipTap rich-text document editor
+│   │   │   ├── ComplianceScore.jsx    # Circular score gauge component
+│   │   │   ├── ProcessingLoader.jsx   # Legacy 5-step progress loader
+│   │   │   ├── ChangesList.jsx        # Numbered list of applied changes
+│   │   │   ├── ViolationsDetected.jsx # Expandable violations display
+│   │   │   ├── IMRADCheck.jsx         # IMRAD structure check pills
+│   │   │   ├── OverrideChips.jsx      # Override parser chips
+│   │   │   └── TransformationReport.jsx # Accordion transformation report
+│   │   │
+│   │   ├── App.jsx                    # Root: state machine (landing/tool/pre-check/loading/success/error)
+│   │   ├── index.css                  # Design tokens + 50+ animations + layout system
+│   │   └── main.jsx                   # React DOM entry point
 │   │
-│   ├── public/                     # Static assets
-│   ├── package.json                # Node dependencies
-│   ├── vite.config.js              # Vite + proxy configuration
-│   ├── tailwind.config.js          # Tailwind theme config
-│   └── postcss.config.js           # PostCSS config
+│   ├── public/                        # Static assets
+│   ├── package.json                   # Dependencies (React 19, Vite 7, Tailwind 4, TipTap 3)
+│   ├── vite.config.js                 # Vite config
+│   ├── tailwind.config.js             # Tailwind theme (shimmer, fill-bar, fade-in animations)
+│   ├── postcss.config.js              # PostCSS config
+│   ├── eslint.config.js               # ESLint 9 + React hooks + React Refresh
+│   └── README.md                      # Frontend documentation
 │
-├── .github/
-│   └── agents/                     # Claude Code agent instruction files
-│       ├── UNIVERSAL_AGENT.md
-│       ├── PROJECT_ARCHITECTURE.md
-│       ├── AI_AGENT.md
-│       └── Full-Stack Agents/
-│           ├── api-agent.md
-│           ├── ui-ux-agent.md
-│           ├── test-agent.md
-│           └── docs-agent.md
+├── word-addin/                        # Microsoft Word Office Add-in
+│   ├── src/
+│   │   ├── components/                # 5 React components
+│   │   │   ├── JournalSelector.jsx    # Journal style dropdown (5 styles)
+│   │   │   ├── FormatButton.jsx       # "Format Paper" CTA button
+│   │   │   ├── ProgressBar.jsx        # Orbital animation + typewriter progress
+│   │   │   ├── ComplianceReport.jsx   # Score gauge + section breakdown table
+│   │   │   └── ErrorBanner.jsx        # Error display with retry
+│   │   │
+│   │   ├── utils/
+│   │   │   ├── api.js                 # Backend API client (5 endpoints)
+│   │   │   └── office.js              # Office.js helpers (read doc, insert DOCX, get text)
+│   │   │
+│   │   ├── App.jsx                    # State machine: IDLE/UPLOADING/FORMATTING/POLLING/RESULTS/APPLYING/ERROR
+│   │   ├── main.jsx                   # Office.onReady() + React mount
+│   │   └── index.css                  # Design tokens + orbital/typewriter/gauge animations
+│   │
+│   ├── public/                        # Add-in icons (16, 32, 80, 128 px)
+│   ├── certs/                         # Self-signed SSL certificates (HTTPS required)
+│   ├── manifest.xml                   # Office Add-in manifest (ReadWriteDocument permission)
+│   ├── package.json                   # Dependencies (React 19, Vite 7, Office.js)
+│   ├── vite.config.js                 # HTTPS server + API proxy config
+│   └── README.md                      # Word Add-in documentation
 │
-├── Prompts/                        # Step-by-step build prompts (hackathon docs)
-├── tasks/                          # Claude Code task tracking
-├── .claude/CLAUDE.md               # Claude Code behavioral config
-└── README.md                       # This file
+├── .github/agents/                    # Claude Code agent instruction files
+├── README.md                          # This file
+└── .gitignore
 ```
 
 ---
 
 ## Application Workflow
 
-### End-to-End Flow
+### End-to-End Flow (Web App)
 
 ```mermaid
 sequenceDiagram
     actor User
     participant UI as React SPA
-    participant Proxy as Vite Proxy
-    participant API as FastAPI /format
+    participant API as FastAPI
     participant Crew as crew.run_pipeline()
     participant A1 as Ingest Agent
     participant A2 as Parse Agent
+    participant A3 as Interpret Agent
     participant A4 as Transform Agent
     participant A5 as Validate Agent
     participant Gemini as Google Gemini
     participant FS as Filesystem
 
-    User->>UI: Upload PDF/DOCX + select journal
-    UI->>Proxy: POST /format (multipart)
-    Proxy->>API: Forward request
+    User->>UI: Upload PDF/DOCX + select journal + choose mode
+    UI->>API: POST /upload (multipart)
 
-    Note over API: Validate: ext, journal, size, text length, alpha ratio
+    Note over API: Validate: ext, size, text length, alpha ratio
 
-    API->>FS: Save temp upload file
-    API->>API: Extract text (PDF/DOCX)
-    API->>Crew: run_pipeline(text, journal)
+    API->>FS: Save temp upload file (1h TTL)
+    API->>API: Extract text (PDF/DOCX/TXT)
+    API-->>UI: {doc_id, filename, word_count, char_count}
 
-    Note over Crew: Check pipeline cache (SHA-256)
+    User->>UI: Click "Check Score" (optional)
+    UI->>API: POST /score/pre (doc_id, journal, mode)
+    API-->>UI: {pre_format_score: {total_score, breakdown}}
+
+    User->>UI: Click "Format My Paper"
+    UI->>API: POST /format (doc_id, journal, mode, overrides)
+    API-->>UI: 202 {job_id, poll_url}
+
+    loop Every 2 seconds
+        UI->>API: GET /format/status/{job_id}
+        API-->>UI: {status, progress, step, step_index}
+    end
+
+    Note over Crew: Background pipeline execution
 
     Crew->>A1: INGEST task
     A1->>Gemini: Label content blocks
     Gemini-->>A1: Labelled content
-    A1-->>Crew: Task output
+    A1-->>Crew: Task output (saved to run_*/1_ingest.txt)
 
     Crew->>A2: PARSE task (context: ingest)
     A2->>Gemini: Extract paper_structure JSON
     Gemini-->>A2: paper_structure
-    A2-->>Crew: Task output
+    A2-->>Crew: Task output (saved to run_*/2_parse.txt)
 
-    Crew->>A4: TRANSFORM task (context: parse)\nPhase A: scan violations\nPhase B: apply fixes
-    A4->>Gemini: Produce violations + docx_instructions JSON
+    Crew->>A3: INTERPRET task
+    A3->>FS: Load rules/*.json
+    A3-->>Crew: Enriched rules
+
+    Crew->>A4: TRANSFORM task (context: parse + rules)
+    A4->>Gemini: Convert citations/references + produce docx_instructions
     Gemini-->>A4: transform JSON
-    A4-->>Crew: Task output
+    A4-->>Crew: Task output (saved to run_*/3_transform.txt)
 
     Crew->>A5: VALIDATE task (context: transform)
     A5->>Gemini: 7 compliance checks + score
     Gemini-->>A5: compliance_report JSON
-    A5-->>Crew: Task output
+    A5-->>Crew: Task output (saved to run_*/4_validate.txt)
 
-    Crew->>FS: Write formatted DOCX
-    Crew-->>API: {compliance_report, docx_filename, metrics}
+    Crew->>FS: Write formatted DOCX (style-specific builder)
+    Crew-->>API: {compliance_report, download_url, changes_made, metrics}
 
-    API->>FS: Delete temp upload
-    API-->>Proxy: 200 JSON response
-    Proxy-->>UI: Response data
+    API-->>UI: GET /format/status → {status: "done"}
+    UI->>API: GET /format/result/{job_id}
+    API-->>UI: Full result with compliance_report
 
-    UI->>User: Show compliance score + download button
+    UI->>User: Show before/after scores + document preview
     User->>UI: Click Download
-    UI->>Proxy: GET /download/:filename
-    Proxy->>API: Forward
-    API->>FS: Read DOCX file
-    API-->>UI: FileResponse (DOCX)
+    UI->>API: GET /download/{filepath}
+    API->>FS: Read DOCX/PDF file
+    API-->>UI: FileResponse
     UI->>User: Browser downloads file
+```
+
+### Word Add-in Flow
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Word as Microsoft Word
+    participant Addin as Taskpane (React)
+    participant API as FastAPI Backend
+
+    User->>Word: Open document
+    User->>Word: Click "Format Paper" in ribbon
+    Word->>Addin: Open taskpane sidebar
+    User->>Addin: Select journal style
+    User->>Addin: Click "Format Paper"
+
+    Addin->>Word: Read document via Office.js (64KB slices)
+    Word-->>Addin: Document as DOCX Blob
+
+    Addin->>API: POST /upload (DOCX blob)
+    API-->>Addin: {doc_id}
+
+    Addin->>API: POST /format (doc_id, journal)
+    API-->>Addin: {job_id}
+
+    loop Every 2 seconds
+        Addin->>API: GET /format/status/{job_id}
+        API-->>Addin: {progress, step}
+    end
+
+    Addin->>API: GET /format/result/{job_id}
+    API-->>Addin: {compliance_report, download_url}
+
+    Addin->>User: Display compliance score + breakdown
+
+    alt Apply to Document
+        User->>Addin: Click "Apply to Document"
+        Addin->>API: GET /download/{path}
+        API-->>Addin: DOCX binary
+        Addin->>Word: insertFileFromBase64() (replaces body)
+    else Download
+        User->>Addin: Click "Download DOCX"
+        Addin->>User: Browser save dialog
+    end
 ```
 
 ---
@@ -346,26 +447,31 @@ sequenceDiagram
 graph TB
     subgraph Actors
         R["Researcher / User"]
+        WU["Word User"]
         Admin["System Admin"]
     end
 
     subgraph "Agent Paperpal System"
         UC1["Upload Research Paper"]
         UC2["Select Journal Style"]
-        UC3["Monitor Processing Progress"]
-        UC4["Download Formatted DOCX"]
-        UC5["View Compliance Score"]
-        UC6["View IMRAD Structure Check"]
-        UC7["View Applied Changes"]
-        UC8["View Recommendations"]
-        UC9["Retry on Error"]
-        UC10["Format Another Paper"]
-        UC11["Check System Health"]
-        UC12["Manage Output Files"]
+        UC2b["Choose Formatting Mode\n(Standard/Semi-Custom/Full-Custom)"]
+        UC3["View Pre-Format Score"]
+        UC4["Monitor Processing Progress"]
+        UC5["Download Formatted DOCX/PDF"]
+        UC6["View Compliance Score"]
+        UC7["View IMRAD Structure Check"]
+        UC8["View Applied Changes"]
+        UC9["Preview Formatted Document"]
+        UC10["Edit Document In-Place"]
+        UC11["Apply Formatting in Word"]
+        UC12["Retry on Error"]
+        UC13["Format Another Paper"]
+        UC14["Check System Health"]
     end
 
     R --> UC1
     R --> UC2
+    R --> UC2b
     R --> UC3
     R --> UC4
     R --> UC5
@@ -374,8 +480,15 @@ graph TB
     R --> UC8
     R --> UC9
     R --> UC10
-    Admin --> UC11
-    Admin --> UC12
+    R --> UC12
+    R --> UC13
+    WU --> UC1
+    WU --> UC2
+    WU --> UC4
+    WU --> UC6
+    WU --> UC11
+    WU --> UC5
+    Admin --> UC14
 ```
 
 ### Class Diagram
@@ -384,53 +497,57 @@ graph TB
 classDiagram
     class FastAPIApp {
         +health() dict
-        +format_document(file, journal) JSONResponse
-        +download_file(filename) FileResponse
+        +upload(file) JSONResponse
+        +score_pre(doc_id, journal, mode) JSONResponse
+        +format_document(doc_id, journal, mode) JSONResponse
+        +format_status(job_id) JSONResponse
+        +format_result(job_id) JSONResponse
+        +download_file(filepath) FileResponse
+        +preview(filepath) HTMLResponse
+        -DOC_STORE dict
+        -JOB_STORE dict
         -_cleanup_old_outputs(hours)
-        -_sanitize_filename(filename)
-        -_get_extension(filename)
+        -_cleanup_expired_docs()
+        -_validate_text_quality(text)
+        -_apply_overrides(rules, overrides)
     }
 
     class Pipeline {
-        +run_pipeline(paper_content, journal_style) dict
-        -_truncate_paper(content) str
-        -_hash_content(paper_text, journal) str
+        +run_pipeline(paper_content, journal, mode, overrides, progress_callback) dict
+        +extract_json_from_llm(raw_text) dict
+        -_build_structured_paper(content) str
+        -_build_section_rules_guide(rules) str
+        -_extract_first_json_block(text) str
         -_validate_task_outputs(crew)
-        -_parse_compliance_report(raw) dict
-        -_write_docx_from_transform(raw, rules) str
+        -_enrich_changes_made(changes, rules)
         -PIPELINE_CACHE dict
+        -_StepTimer class
     }
 
     class IngestAgent {
-        +role: str
-        +goal: str
-        +backstory: str
-        +llm: str
+        +role: "Academic Document Structure Analyst"
         +_validate_ingest_output(output)
         +_safe_context()
     }
 
     class ParseAgent {
-        +role: str
-        +goal: str
-        +backstory: str
+        +role: "Academic Paper Structure Parser"
         +_validate_parse_output(output)
         +_safe_context()
     }
 
     class InterpretAgent {
-        +role: str
+        +role: "Journal Formatting Rules Analyst"
+        +load_journal_rules() Tool
         +_RULE_ENGINE_CACHE dict
         +_validate_interpret_output(output)
-        +_safe_context()
     }
 
     class TransformAgent {
-        +CANONICAL_SECTION_ORDER list
+        +role: "Academic Document Formatter"
+        +detect_style(journal) str
         +_normalize_citation(citation) str
-        +_sort_sections_by_canonical_order(sections) list
         +_validate_transform_output(output)
-        +_safe_context()
     }
 
     class ValidateAgent {
@@ -438,7 +555,12 @@ classDiagram
         +_clamp_score(score) int
         +_recompute_overall_score(breakdown) int
         +_validate_validate_output(output)
-        +_safe_context()
+    }
+
+    class RuleEngine {
+        +generate_rules(journal, mode, overrides, custom_rules) dict
+        -_apply_merge_rules(base, overrides) dict
+        -_extract_from_pdf_guidelines(pdf_text) dict
     }
 
     class ComplianceReport {
@@ -446,20 +568,8 @@ classDiagram
         +submission_ready: bool
         +breakdown: dict
         +changes_made: list
-        +imrad_check: dict
-        +citation_consistency: dict
         +warnings: list
-        +recommendations: list
-    }
-
-    class JournalRules {
-        +document: dict
-        +abstract: dict
-        +headings: dict
-        +citations: dict
-        +references: dict
-        +figures: dict
-        +tables: dict
+        +summary: str
     }
 
     FastAPIApp --> Pipeline : calls
@@ -469,58 +579,50 @@ classDiagram
     Pipeline --> TransformAgent : creates
     Pipeline --> ValidateAgent : creates
     Pipeline --> ComplianceReport : produces
-    InterpretAgent --> JournalRules : loads
-    TransformAgent --> JournalRules : applies
+    InterpretAgent --> RuleEngine : uses
+    TransformAgent --> RuleEngine : applies
     ValidateAgent --> ComplianceReport : fills
-```
-
-### Sequence Diagram — Error Path
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant UI as React SPA
-    participant API as FastAPI
-
-    User->>UI: Upload scanned PDF
-    UI->>API: POST /format
-    API->>API: Extract text → 45 chars
-    Note over API: len(text) < 100 → reject
-    API-->>UI: HTTP 422 {error, step: "extraction"}
-    UI->>UI: setAppState("error")
-    UI->>User: Show ErrorDisplay with message + "Try Again"
-    User->>UI: Click "Try Again"
-    UI->>UI: handleReset() → idle state
 ```
 
 ### Activity Diagram — Pipeline
 
 ```mermaid
 flowchart TD
-    Start([User Submits File]) --> V1{Valid extension?}
+    Start([User Submits File]) --> Upload[POST /upload]
+    Upload --> V1{Valid extension?}
     V1 -->|No| E1[Return 422 — bad extension]
-    V1 -->|Yes| V2{Valid journal?}
-    V2 -->|No| E2[Return 422 — unknown journal]
-    V2 -->|Yes| V3{File <= 10 MB?}
+    V1 -->|Yes| V3{File <= 10 MB?}
     V3 -->|No| E3[Return 413 — file too large]
-    V3 -->|Yes| Extract[Extract text from PDF/DOCX]
+    V3 -->|Yes| Extract[Extract text from PDF/DOCX/TXT]
     Extract --> V4{Text >= 100 chars?}
     V4 -->|No| E4[Return 422 — no readable text]
     V4 -->|Yes| V5{Alpha ratio >= 0.3?}
-    V5 -->|No| E5[Return 422 — garbled text]
-    V5 -->|Yes| Cache{Cache hit?}
+    V5 -->|No| E5[Return 422 — garbled/scanned text]
+    V5 -->|Yes| Store[Store in DOC_STORE]
+    Store --> PreScore{Pre-format score?}
+    PreScore -->|Yes| Score[POST /score/pre → quick score]
+    PreScore -->|No| FormatReq[POST /format]
+    Score --> FormatReq
+    FormatReq --> V2{Valid journal?}
+    V2 -->|No| E2[Return 422 — unknown journal]
+    V2 -->|Yes| Mode{Formatting mode?}
+    Mode -->|Standard| Rules[Load default rules]
+    Mode -->|Semi-Custom| Override[Apply user overrides to rules]
+    Mode -->|Full-Custom| Custom[Extract rules from guidelines PDF]
+    Rules & Override & Custom --> Cache{Pipeline cache hit?}
     Cache -->|Yes| CacheHit[Return cached result]
-    Cache -->|No| Truncate[Truncate if > 32K chars]
-    Truncate --> A1[INGEST: Label content blocks]
+    Cache -->|No| BG[Start background job]
+    BG --> A1[INGEST: Label content blocks]
     A1 --> A2[PARSE: Extract paper_structure]
-    A2 --> A3[INTERPRET: Load journal rules]
-    A3 --> A4[TRANSFORM: Apply formatting]
-    A4 --> A5[VALIDATE: Score compliance]
-    A5 --> DOCX[Write formatted DOCX]
-    DOCX --> Cache2[Store in pipeline cache]
-    Cache2 --> Response[Return JSON + download URL]
+    A2 --> A3[INTERPRET: Load + analyze rules]
+    A3 --> A4[TRANSFORM: Convert citations + generate DOCX instructions]
+    A4 --> A5[VALIDATE: 7 checks + score 0-100]
+    A5 --> DOCX[Write formatted DOCX via style-specific builder]
+    DOCX --> Save[Save to outputs/run_*/]
+    Save --> Cache2[Store in pipeline cache]
+    Cache2 --> Response[Update JOB_STORE → done]
     CacheHit --> Response
-    Response --> End([User Downloads DOCX])
+    Response --> End([User Downloads DOCX/PDF])
 
     style E1 fill:#7f1d1d,color:#fca5a5
     style E2 fill:#7f1d1d,color:#fca5a5
@@ -534,32 +636,43 @@ flowchart TD
 
 ```mermaid
 graph TB
-    subgraph "Frontend (React + Vite)"
-        App["App.jsx\n4-state machine"]
-        Upload["Upload.jsx\nFile + journal selector"]
-        Loader["ProcessingLoader.jsx\n5-step progress"]
-        Score["ComplianceScore.jsx\n7-section dashboard"]
-        Changes["ChangesList.jsx\nApplied fixes list"]
-        IMRAD["IMRADCheck.jsx\nStructure pills"]
+    subgraph "Web Frontend (React 19 + Vite 7)"
+        App["App.jsx\n6-view state machine"]
+        Upload["Upload.jsx\nDrag-drop file zone"]
+        Semi["SemiCustomPanel.jsx\n13-field overrides"]
+        Guide["GuidelinesUpload.jsx\nPDF guidelines"]
+        Progress["ProgressScreen.jsx\nPolling + typewriter"]
+        Results["ResultsScreen.jsx\n2-column layout"]
+        Editor["LiveDocumentEditor.jsx\nTipTap rich editor"]
+        Score["ComplianceScore.jsx\nAnimated gauge"]
+    end
+
+    subgraph "Word Add-in (React 19 + Office.js)"
+        AddinApp["App.jsx\n7-state machine"]
+        Journal["JournalSelector.jsx"]
+        FormatBtn["FormatButton.jsx"]
+        ProgressBar["ProgressBar.jsx\nOrbital animation"]
+        Report["ComplianceReport.jsx"]
+        OfficeUtils["office.js\nRead/Insert document"]
     end
 
     subgraph "Backend (FastAPI)"
-        Main["main.py\nAPI endpoints"]
+        Main["main.py\n9 API endpoints"]
         Crew["crew.py\nPipeline orchestration"]
         Agents["agents/\n5 CrewAI agents"]
-        Tools["tools/\npdf_reader, docx_writer..."]
-        Rules["rules/\n*.json rule files"]
+        Tools["tools/\n11 utility modules"]
+        Engine["engine/\nRule engine + format engine"]
+        Rules["rules/\n5 JSON rule files"]
     end
 
-    App --> Upload
-    App --> Loader
-    App --> Score
-    App --> Changes
-    App --> IMRAD
-    App -->|"HTTP via Vite proxy"| Main
+    App --> Upload & Semi & Guide & Progress & Results & Editor & Score
+    AddinApp --> Journal & FormatBtn & ProgressBar & Report
+    AddinApp --> OfficeUtils
+    App -->|"HTTP"| Main
+    AddinApp -->|"HTTP via proxy"| Main
     Main --> Crew
     Crew --> Agents
-    Agents --> Tools
+    Agents --> Tools & Engine
     Agents -->|"LLM calls"| Gemini["Google Gemini API"]
     Tools --> Rules
 ```
@@ -572,189 +685,17 @@ graph TB
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/health` | System status + supported journals |
-| `POST` | `/format` | Upload paper → run pipeline → return report + download URL |
-| `GET` | `/download/{filename}` | Download generated DOCX |
-| `GET` | `/status/{job_id}` | Poll status of async background job (large files >500KB) |
+| `GET` | `/health` | System status + supported journals + storage diagnostics |
+| `POST` | `/upload` | Upload file, extract text, reserve `doc_id` |
+| `POST` | `/score/pre` | Pre-format compliance score (before pipeline) |
+| `GET` | `/journal-defaults/{journal}` | Overridable field schema for semi-custom mode |
+| `POST` | `/format` | Trigger async CrewAI pipeline → returns `job_id` |
+| `GET` | `/format/status/{job_id}` | Poll pipeline progress (0-100%, step name) |
+| `GET` | `/format/result/{job_id}` | Fetch completed results + compliance report |
+| `GET` | `/download/{filepath}` | Download formatted DOCX or PDF |
+| `GET` | `/preview/{filepath}` | HTML preview of formatted document (via Mammoth) |
 
----
-
-### GET /health
-
-Health check — returns system status and supported journals.
-
-| Field | Value |
-|-------|-------|
-| Method | `GET` |
-| URL | `/health` |
-| Auth | None |
-
-**Response 200:**
-```json
-{
-  "status": "ok",
-  "version": "1.0.0",
-  "service": "Agent Paperpal",
-  "supported_journals": ["APA 7th Edition", "IEEE", "Vancouver", "Springer", "Chicago 17th Edition"],
-  "max_file_size_mb": 10,
-  "system_info": {
-    "python_version": "3.11.0",
-    "crewai_version": "0.36.0",
-    "api_uptime_seconds": 142.3
-  },
-  "diagnostics": {
-    "rules_folder_exists": true,
-    "outputs_folder_writable": true
-  }
-}
-```
-
----
-
-### POST /format
-
-Upload a research paper and format it.
-
-| Field | Value |
-|-------|-------|
-| Method | `POST` |
-| URL | `/format` |
-| Content-Type | `multipart/form-data` |
-| Auth | None |
-
-**Request Body (multipart):**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `file` | File | Yes | PDF or DOCX, max 10 MB |
-| `journal` | String | Yes | One of the supported journal names |
-
-**Response 200:**
-```json
-{
-  "success": true,
-  "request_id": "3193503d",
-  "download_url": "/download/formatted_3193503d.docx",
-  "compliance_report": {
-    "overall_score": 84,
-    "submission_ready": true,
-    "breakdown": {
-      "document_format": { "score": 90, "issues": [] },
-      "abstract":        { "score": 75, "issues": ["Word count 312 exceeds 250 limit"] },
-      "headings":        { "score": 95, "issues": [] },
-      "citations":       { "score": 80, "issues": ["2 in-text citations use wrong format"] },
-      "references":      { "score": 85, "issues": [] },
-      "figures":         { "score": 100, "issues": [] },
-      "tables":          { "score": 70, "issues": ["Table 2 missing title"] }
-    },
-    "changes_made": ["Reformatted 14 in-text citations to APA style", "..."],
-    "imrad_check": {
-      "introduction": true,
-      "methods": true,
-      "results": true,
-      "discussion": false
-    },
-    "citation_consistency": {
-      "orphan_citations": [],
-      "uncited_references": ["Smith et al. 2019"]
-    },
-    "warnings": ["3 references older than 10 years"],
-    "recommendations": ["Add a Discussion section to complete IMRAD structure"]
-  },
-  "changes_made": [
-    { "what": "Reformatted 14 in-text citations to APA style", "rule_reference": "APA 7th §8.11", "why": "Required by APA 7th §8.11" }
-  ],
-  "processing_time_seconds": 47.3,
-  "output_metadata": { "filename": "formatted_3193503d.docx", "size_bytes": 24576, "size_kb": 24.0 },
-  "pipeline_metrics": {
-    "stage_times": { "ingest": 9.2, "parse": 11.4, "transform": 14.6, "validate": 10.1 },
-    "total_runtime": 47.3
-  },
-  "interpretation_results": {
-    "violations": [
-      { "rule_category": "citations", "rule_description": "...", "rule_reference": "APA 7th §8.11", "violation_found": "...", "fix_applied": "..." }
-    ],
-    "total_violations": 3,
-    "journal": "APA 7th Edition"
-  }
-}
-```
-
-**Large file (>500KB) — async response (HTTP 202):**
-```json
-{
-  "success": true,
-  "async": true,
-  "job_id": "3193503d",
-  "status": "processing",
-  "poll_url": "/status/3193503d",
-  "message": "Large file (620KB) queued for background processing. Poll /status/3193503d for results."
-}
-```
-
-**Error Responses:**
-
-| Status | Code | When |
-|--------|------|------|
-| 413 | — | File > 10 MB |
-| 422 | `validation` | Bad extension, unknown journal, no readable text |
-| 422 | `extraction` | Extracted text too short or garbled |
-| 422 | `llm` | Gemini returned unparseable response |
-| 422 | `transform` | Transform agent failed to produce docx_instructions |
-| 500 | — | Unexpected server error |
-
----
-
-### GET /download/{filename}
-
-Download a formatted DOCX file.
-
-| Field | Value |
-|-------|-------|
-| Method | `GET` |
-| URL | `/download/{filename}` |
-| Auth | None |
-
-**Path Parameters:**
-
-| Parameter | Description |
-|-----------|-------------|
-| `filename` | Exact filename returned in `download_url` from `/format` |
-
-**Response 200:** Binary DOCX file stream
-
-**Security:** Regex validates filename (`^[a-zA-Z0-9_\-\.]+$`), only `.docx` served, path confined to `outputs/` directory.
-
----
-
-### GET /status/{job_id}
-
-Poll status of a background pipeline job (created for files >500KB).
-
-| Field | Value |
-|-------|-------|
-| Method | `GET` |
-| URL | `/status/{job_id}` |
-| Auth | None |
-
-**Path Parameters:** `job_id` — 8-character hex string returned by `/format` async response.
-
-**Response — processing:**
-```json
-{ "status": "processing" }
-```
-
-**Response — done:**
-```json
-{ "status": "done", "result": { ...same shape as /format 200 response... } }
-```
-
-**Response — error:**
-```json
-{ "status": "error", "error": "Pipeline error message" }
-```
-
-**Security:** `job_id` validated as `^[a-f0-9]{8}$` — rejects injection attempts.
+See [backend/README.md](backend/README.md) for full API reference with request/response schemas.
 
 ---
 
@@ -763,8 +704,8 @@ Poll status of a background pipeline job (created for files >500KB).
 ### Prerequisites
 
 - Python 3.11+
-- Node.js 18+ (for frontend)
-- Google Gemini API key (free tier available at [Google AI Studio](https://aistudio.google.com))
+- Node.js 18+ (for frontend and word-addin)
+- Google Gemini API key (free tier at [Google AI Studio](https://aistudio.google.com))
 
 ### 1. Clone the Repository
 
@@ -784,14 +725,22 @@ cp .env.example .env
 # Edit .env and set GEMINI_API_KEY=your-key-here
 ```
 
-### 3. Set Up the Frontend
+### 3. Set Up the Frontend (Web App)
 
 ```bash
 cd ../frontend
 npm install
 ```
 
-### 4. Start Both Services
+### 4. Set Up the Word Add-in (Optional)
+
+```bash
+cd ../word-addin
+npm install
+npm run certs                   # Generate self-signed SSL certificates
+```
+
+### 5. Start Services
 
 **Terminal 1 — Backend:**
 ```bash
@@ -800,28 +749,49 @@ source venv/bin/activate
 uvicorn main:app --reload --port 8000
 ```
 
-**Terminal 2 — Frontend:**
+**Terminal 2 — Frontend (Web App):**
 ```bash
 cd frontend
-npm run dev
+npm run dev                     # http://localhost:5173
 ```
 
-Visit **http://localhost:5173** in your browser.
+**Terminal 3 — Word Add-in (optional):**
+```bash
+cd word-addin
+npm run dev                     # https://localhost:3001
+```
+
+Visit **http://localhost:5173** for the web app, or sideload `word-addin/manifest.xml` into Word.
 
 ---
 
 ## Environment Variables
 
-| Variable | Required | Description | Example |
-|----------|----------|-------------|---------|
-| `GEMINI_API_KEY` | Yes | Google Gemini API key | `AIzaSy...` |
-| `GOOGLE_API_KEY` | Yes | Same as above (LiteLLM alias) | `AIzaSy...` |
-| `GEMINI_MODEL` | No | Gemini model name | `gemini-2.5-flash` |
-| `CORS_ORIGINS` | No | Comma-separated allowed origins | `http://localhost:5173` |
-| `BACKEND_HOST` | No | Uvicorn bind host | `0.0.0.0` |
-| `BACKEND_PORT` | No | Uvicorn bind port | `8000` |
-| `LLM_TIMEOUT` | No | LLM call timeout seconds | `60` |
-| `LLM_MAX_RETRIES` | No | LLM retry count | `3` |
+### Backend (`backend/.env`)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `GEMINI_API_KEY` | Yes | — | Google Gemini API key |
+| `GOOGLE_API_KEY` | Yes | — | Same key (LiteLLM alias) |
+| `GEMINI_MODEL` | No | `gemini-2.5-flash` | Gemini model identifier |
+| `GEMINI_MAX_TOKENS` | No | `65536` | Max tokens per LLM call |
+| `CORS_ORIGINS` | No | `http://localhost:5173,http://localhost:3000` | Comma-separated allowed origins |
+| `BACKEND_HOST` | No | `0.0.0.0` | Uvicorn bind host |
+| `BACKEND_PORT` | No | `8000` | Uvicorn bind port |
+| `LLM_TIMEOUT` | No | `60` | LLM call timeout in seconds |
+| `LLM_MAX_RETRIES` | No | `3` | LLM retry count on failure |
+
+### Frontend (`frontend/.env`)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `VITE_BACKEND_URL` | No | `http://localhost:8000` | Backend API base URL |
+
+### Word Add-in (`word-addin/.env`)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `VITE_BACKEND_URL` | No | `/api` (proxied) | Backend API base URL |
 
 ---
 
@@ -831,25 +801,26 @@ Visit **http://localhost:5173** in your browser.
 
 ```bash
 # Backend (hot-reload)
-cd backend && uvicorn main:app --reload --port 8000
+cd backend && source venv/bin/activate && uvicorn main:app --reload --port 8000
 
 # Frontend (HMR dev server)
 cd frontend && npm run dev
+
+# Word Add-in (HTTPS dev server)
+cd word-addin && npm run dev
 ```
 
-### Production Build (Frontend)
+### Production Build
 
 ```bash
-cd frontend
-npm run build       # outputs to frontend/dist/
-npm run preview     # preview the production build locally
-```
+# Frontend
+cd frontend && npm run build         # outputs to frontend/dist/
 
-### Production Backend
+# Word Add-in
+cd word-addin && npm run build       # outputs to word-addin/dist/
 
-```bash
-cd backend
-uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
+# Backend
+cd backend && uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
 ```
 
 ---
@@ -858,7 +829,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
 
 | Concern | Mitigation |
 |---------|-----------|
-| Path traversal in downloads | Filename regex `^[a-zA-Z0-9_\-\.]+$` + path prefix check |
+| Path traversal in downloads | Filename regex + resolved path must start with `outputs/` |
 | File type spoofing | Extension whitelist (`pdf`, `docx`) + content length check |
 | Oversized uploads | Hard 10 MB limit enforced before text extraction |
 | Garbled/scanned PDFs | Alpha-character ratio guard (>=0.3) rejects image-only PDFs |
@@ -866,8 +837,10 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
 | Stack trace leaks | Global FastAPI exception handler returns generic messages |
 | API key exposure | All secrets in `.env`, never committed |
 | CORS | Configurable `CORS_ORIGINS` env var, defaults to localhost only |
-| Temp file cleanup | Upload files deleted in `finally` block regardless of success/failure |
-| Stale output cleanup | Files older than 6 hours auto-deleted on startup |
+| Temp file cleanup | Upload files auto-expire after 1 hour |
+| Stale output cleanup | `outputs/run_*` folders older than 6 hours auto-deleted on startup |
+| Office Add-in HTTPS | Self-signed certificates for development; production requires real certs |
+| Job ID validation | `^[a-f0-9]{8}$` regex — rejects injection attempts |
 
 ---
 
@@ -877,28 +850,30 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
 |-------------|---------------|
 | Pipeline caching | SHA-256 keyed in-memory dict — identical (paper + journal) submissions return instantly |
 | Section-aware context | `text_chunker.split_into_sections()` pre-labels IMRAD structure before agents run |
-| Async large files | Files >500KB routed to `BackgroundTasks` — HTTP 202 + poll `/status/{job_id}` |
-| Step timing | `_StepTimer` logs wall-clock per stage for performance analysis |
-| No request timeout | `FORMAT_TIMEOUT_MS = 0` and Vite proxy `timeout: 0` — never kills in-flight requests |
-| Stale file cleanup | Auto-cleanup on startup, not per-request |
-| Verbatim content guard | 8A filters empty sections and restores truncated abstract from original text |
-| Schema validation | 8B validates `docx_instructions` with jsonschema before DOCX write |
-| Animated skeleton UI | Compliance score shows skeleton rows during loading, not empty state |
+| Async all jobs | All formatting runs as `BackgroundTasks` — UI polls via `/format/status` |
+| Step timing | `_StepTimer` tracks wall-clock per pipeline stage with progress callbacks |
+| Style-specific builders | Dedicated DOCX builders (APA, IEEE, etc.) avoid generic overhead |
+| Media bypass | Images/tables extracted via PyMuPDF/pdfplumber, injected directly into DOCX (bypasses LLM) |
+| Robust JSON extraction | 8-level fallback for parsing LLM output (handles markdown, reasoning, trailing commas) |
+| Pre-format scoring | Quick 5-category score without running full pipeline |
+| Content truncation | Papers >32K chars split: first 24K + last 8K (references) |
+| Per-run output folders | Agent outputs saved to `run_*/` for debugging without reprocessing |
+| Rules caching | Journal rules loaded once from disk, cached in memory |
 
 ---
 
 ## Future Roadmap
 
 - [ ] Support additional journal styles (Nature, Elsevier, ACS, PLOS)
-- [x] Asynchronous processing with background jobs for large files (>500KB)
-- [ ] WebSocket real-time progress updates from backend pipeline to frontend
-- [ ] PDF output generation (in addition to DOCX)
+- [ ] WebSocket real-time progress updates (replace polling)
 - [ ] Persistent results storage (PostgreSQL) with 7-day retention
 - [ ] User accounts and submission history
 - [ ] Batch processing — format multiple papers in one session
 - [ ] Side-by-side diff view — original vs formatted document
-- [ ] Citation style migration (e.g., APA → IEEE conversion)
+- [ ] Citation style migration (e.g., APA to IEEE conversion)
 - [ ] Docker Compose deployment for one-command setup
+- [ ] Word Add-in publishing to AppSource marketplace
+- [ ] Reference metadata enrichment via CrossRef/PubMed APIs
 
 ---
 
@@ -907,9 +882,9 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
 ### Branch Strategy
 
 ```
-main          ← stable, production-ready
-  └── develop ← integration branch
-        └── feat/*, fix/*, docs/* ← feature branches
+main          <- stable, production-ready
+  └── develop <- integration branch
+        └── feat/*, fix/*, docs/* <- feature branches
 ```
 
 ### Steps
@@ -928,11 +903,6 @@ main          ← stable, production-ready
 Types: feat | fix | docs | style | refactor | test | chore | security | ux
 ```
 
-### Code Quality
-
-- Backend: `mypy` for type checking, `python -m pytest` for tests
-- Frontend: No TypeScript `any`, Lucide icons only (no emojis in JSX), Tailwind dark tokens only
-
 ---
 
 ## License
@@ -947,9 +917,9 @@ Built for **HackaMined 2026** — Cactus Communications / Paperpal by Editage Tr
 
 | Role | Contribution |
 |------|-------------|
-| Full-Stack Development | React SPA, FastAPI backend, CrewAI pipeline |
+| Full-Stack Development | React SPA, Word Add-in, FastAPI backend, CrewAI pipeline |
 | AI/ML Engineering | 5-agent architecture, Gemini integration, prompt engineering |
-| System Design | Layered architecture, caching strategy, error hierarchy |
+| System Design | Layered architecture, caching strategy, error hierarchy, 3-mode rules engine |
 
 ---
 

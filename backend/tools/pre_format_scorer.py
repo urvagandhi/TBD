@@ -12,6 +12,7 @@ import re
 from typing import Optional
 
 from tools.logger import get_logger
+from agents.validate_agent import SECTION_WEIGHTS, _clamp_score
 
 logger = get_logger(__name__)
 
@@ -64,7 +65,7 @@ def score_pre_format(paper_text: str, rules: dict) -> dict:
                 "headings":   {"score": int, "issue": str | None},
                 "citations":  {"score": int, "issue": str | None},
                 "references": {"score": int, "issue": str | None},
-                "document":   {"score": int, "issue": str | None},
+                "document_format":   {"score": int, "issue": str | None},
             }
         }
     """
@@ -73,20 +74,30 @@ def score_pre_format(paper_text: str, rules: dict) -> dict:
         "headings": _score_headings(paper_text, rules),
         "citations": _score_citations(paper_text, rules),
         "references": _score_references(paper_text, rules),
-        "document": _score_document(paper_text, rules),
+        "document_format": _score_document(paper_text, rules),
+        # Pre-format scorer doesn't evaluate Figures/Tables well from raw text natively
+        # So we baseline them at 100 to not ruin the weighted score.
+        "figures": {"score": 100, "issue": None},
+        "tables": {"score": 100, "issue": None},
     }
 
-    scores = [cat["score"] for cat in breakdown.values()]
-    total_score = round(sum(scores) / len(scores)) if scores else 0
+    # Calculate weighted score using shared SECTION_WEIGHTS
+    total_score = 0.0
+    for section, weight in SECTION_WEIGHTS.items():
+        section_data = breakdown.get(section, {})
+        raw_score = section_data.get("score", 100) if isinstance(section_data, dict) else 100
+        total_score += _clamp_score(raw_score) * weight
+    
+    total_score = _clamp_score(round(total_score))
 
     logger.info(
-        "[PRE-SCORE] total=%d | abstract=%d headings=%d citations=%d references=%d document=%d",
+        "[PRE-SCORE] total=%d | abstract=%d headings=%d citations=%d references=%d document_format=%d",
         total_score,
         breakdown["abstract"]["score"],
         breakdown["headings"]["score"],
         breakdown["citations"]["score"],
         breakdown["references"]["score"],
-        breakdown["document"]["score"],
+        breakdown["document_format"]["score"],
     )
 
     return {"total_score": total_score, "breakdown": breakdown}

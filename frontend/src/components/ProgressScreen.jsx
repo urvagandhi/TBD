@@ -317,7 +317,7 @@ export default function ProgressScreen({ jobId, journal, filename, onComplete, o
             ? 'Loading your results...'
             : showLongWait
             ? 'Taking longer than usual. Large papers require more time...'
-            : "This typically takes 40-60 seconds. Please don't close this tab."}
+            : "This typically takes a few minutes. Please don't close this tab."}
         </p>
       </div>
     </div>

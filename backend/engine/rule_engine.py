@@ -274,6 +274,24 @@ def _sanitise_llm_rules(rules: dict) -> dict:
             )
             _set_nested(sanitised, field_path, default_val)
 
+    # Replace None values with defaults — LLM often returns null for fields
+    # it can't extract, but the schema requires concrete types (e.g. string).
+    def _replace_nulls(dst: dict, src: dict, path: str = "") -> None:
+        for key, val in dst.items():
+            full_path = f"{path}.{key}" if path else key
+            if val is None:
+                default_val = _get_nested(src, full_path)
+                if default_val is not None:
+                    dst[key] = copy.deepcopy(default_val)
+                    logger.warning(
+                        "[RULE] LLM returned null at %s — using default %r",
+                        full_path, default_val,
+                    )
+            elif isinstance(val, dict):
+                _replace_nulls(val, src, full_path)
+
+    _replace_nulls(sanitised, DEFAULT_RULES)
+
     return sanitised
 
 
