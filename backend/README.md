@@ -2,7 +2,7 @@
 
 > FastAPI + CrewAI + Google Gemini — 5-agent autonomous manuscript formatting pipeline.
 
-The backend is responsible for accepting research paper uploads, running the 4-agent CrewAI pipeline that detects and fixes formatting violations, writing the formatted DOCX output, and returning a scored compliance report. Large files (>500KB) are processed as background jobs with polling via `GET /status/{job_id}`.
+The backend accepts research paper uploads (PDF/DOCX/TXT), runs a 5-agent CrewAI pipeline that detects and fixes formatting violations, writes the formatted DOCX output using style-specific builders, and returns a scored compliance report. All formatting jobs run asynchronously as background tasks with real-time progress polling. Supports 3 formatting modes: standard (journal defaults), semi-custom (user overrides), and full-custom (upload guidelines PDF).
 
 ---
 
@@ -10,7 +10,6 @@ The backend is responsible for accepting research paper uploads, running the 4-a
 
 - [Architecture Overview](#architecture-overview)
 - [Agent Pipeline](#agent-pipeline)
-- [Reliability Features (8A/8B/8C)](#reliability-features-8a8b8c)
 - [Directory Structure](#directory-structure)
 - [Technology Stack](#technology-stack)
 - [API Reference](#api-reference)
@@ -19,9 +18,12 @@ The backend is responsible for accepting research paper uploads, running the 4-a
 - [Running the Server](#running-the-server)
 - [Input Validation](#input-validation)
 - [Error Handling](#error-handling)
+- [Formatting Modes](#formatting-modes)
+- [DOCX Builders](#docx-builders)
 - [Compliance Report Schema](#compliance-report-schema)
 - [Journal Rules Schema](#journal-rules-schema)
 - [Performance & Caching](#performance--caching)
+- [In-Memory Stores](#in-memory-stores)
 - [Security](#security)
 - [Testing](#testing)
 - [Deployment](#deployment)
@@ -32,208 +34,220 @@ The backend is responsible for accepting research paper uploads, running the 4-a
 
 ```mermaid
 graph TB
-    subgraph "FastAPI Layer"
+    subgraph "FastAPI Layer (9 Endpoints)"
         Health["GET /health\nSystem status + journals"]
-        Format["POST /format\nUpload + validate + run pipeline"]
-        Download["GET /download/:file\nServe formatted DOCX"]
-        Status["GET /status/:job_id\nPoll async job (8C)"]
+        Upload["POST /upload\nFile upload + text extraction"]
+        PreScore["POST /score/pre\nPre-format compliance score"]
+        Defaults["GET /journal-defaults/:journal\nOverridable fields schema"]
+        Format["POST /format\nAsync pipeline trigger"]
+        Status["GET /format/status/:job_id\nProgress polling"]
+        Result["GET /format/result/:job_id\nFetch completed results"]
+        Download["GET /download/:filepath\nServe DOCX/PDF"]
+        Preview["GET /preview/:filepath\nHTML preview (Mammoth)"]
     end
 
     subgraph "Validation Pipeline"
-        V1["1. File extension check\n(pdf/docx only)"]
-        V2["2. Journal name check\n(JOURNAL_MAP lookup)"]
-        V3["3. File size check\n(<= 10 MB)"]
+        V1["1. File extension check\n(pdf/docx/txt only)"]
+        V2["2. File size check\n(<= 10 MB)"]
+        V3["3. Text extraction\n(pdf_reader / docx_reader)"]
         V4["4. Text length check\n(>= 100 chars)"]
         V5["5. Alpha ratio check\n(>= 0.3, rejects scanned PDFs)"]
     end
 
-    subgraph "CrewAI Pipeline (4 agents)"
+    subgraph "CrewAI Pipeline (5 agents)"
         A1["INGEST\nLabel content blocks"]
         A2["PARSE\nExtract paper_structure"]
-        A4["TRANSFORM\nPhase A: scan violations\nPhase B: apply fixes"]
+        A3["INTERPRET\nLoad + analyze rules"]
+        A4["TRANSFORM\nConvert citations + docx_instructions"]
         A5["VALIDATE\n7 checks + score 0-100"]
     end
 
     subgraph "Tools"
         PDF["pdf_reader.py\nPyMuPDF"]
         DOCX_R["docx_reader.py\npython-docx"]
-        DOCX_W["docx_writer.py\npython-docx"]
+        DOCX_W["docx_writer.py\n6 style-specific builders"]
         Rules["rule_loader.py\nrules/*.json"]
-        Logger["logger.py\nget_logger()"]
-        Errors["tool_errors.py\nException hierarchy"]
+        Engine["rule_engine.py\n3-mode rules"]
+        Checker["compliance_checker.py\n7 deterministic checks"]
+        Media["media_extractor.py\nImages + tables"]
+        Chunker["text_chunker.py\nIMRAD splitter"]
+        PreScorer["pre_format_scorer.py\nQuick 5-category score"]
     end
 
-    Format --> V1 --> V2 --> V3 --> PDF & DOCX_R --> V4 --> V5
-    V5 --> A1 --> A2 --> A4 --> A5 --> DOCX_W
-    A4 --> Rules
-    DOCX_W -->|"outputs/*.docx"| Download
+    Upload --> V1 --> V2 --> V3 --> V4 --> V5
+    Format --> A1 --> A2 --> A3 --> A4 --> A5 --> DOCX_W
+    A3 --> Rules & Engine
+    A5 --> Checker
+    V3 --> PDF & DOCX_R
+    DOCX_W -->|"outputs/run_*/*.docx"| Download
 ```
 
 ---
 
 ## Agent Pipeline
 
-The pipeline is a **sequential CrewAI `Crew`** — each agent receives context from prior agents via `Task.context`. All agents use `temperature=0` for deterministic output. All JSON is extracted using `extract_json_from_llm()` which handles markdown fences, Python literals, trailing commas, and single quotes.
+The pipeline is a **sequential CrewAI `Crew`** — each agent receives context from prior agents via `Task.context`. All agents use `temperature=0` for deterministic output. All JSON is extracted using `extract_json_from_llm()` which implements 8 fallback strategies (markdown fences, balanced brackets, trailing commas, Python literals, single quotes, etc.).
 
-Before the pipeline runs, `_build_structured_paper()` uses `text_chunker.split_into_sections()` to pre-label the paper with IMRAD section delimiters (`[SECTION: NAME]` markers). This gives the Ingest agent a structurally clear document without truncating any content.
+Before the pipeline runs, `_build_structured_paper()` uses `text_chunker.split_into_sections()` to pre-label the paper with IMRAD section delimiters (`[SECTION: NAME]` markers). A `_build_section_rules_guide()` generates a human-readable per-section formatting guide injected into the Transform agent's prompt.
+
+Progress is reported via a callback function that updates `JOB_STORE` — the frontend polls `/format/status/{job_id}` every 2 seconds.
 
 ### Agent 1 — INGEST
 
-**Goal**: Label every structural block in the raw text with a type marker.
+**Role**: Academic Document Structure Analyst
 
-**Output format**: Plain text with prefixed markers:
+**Goal**: Label every structural block in the raw text with type markers.
+
+**Output format**: Plain text with markers:
 ```
-[TITLE] Deep Learning for Medical Imaging
-[ABSTRACT] This paper presents...
-[HEADING_H1] Introduction
-[BODY_PARAGRAPH] Neural networks have been...
-[IN_TEXT_CITATION] (Smith et al., 2021)
-[REFERENCE_ENTRY] Smith, J. et al. (2021). ...
+[TITLE_START] Deep Learning for Medical Imaging [TITLE_END]
+[ABSTRACT_START] This paper presents... [ABSTRACT_END]
+[HEADING_H1:Introduction]
+[CITATION:Smith et al., 2021]
+[REFERENCE_START] Smith, J. et al. (2021). ... [REFERENCE_END]
+[CITATION_STYLE:author-date]
+[SOURCE_FORMAT:APA]
 ```
 
-**Supported labels**: `TITLE`, `ABSTRACT`, `KEYWORD`, `HEADING_H1`-`H5`, `BODY_PARAGRAPH`, `PARA_START/END`, `BLOCK_QUOTE_START/END`, `FOOTNOTE_START/END`, `APPENDIX_START/END`, `IN_TEXT_CITATION`, `FIGURE_CAPTION`, `TABLE_CAPTION`, `REFERENCE_ENTRY`
+**Supported markers**: `TITLE`, `AUTHORS`, `ABSTRACT`, `KEYWORDS`, `HEADING_H1`-`H3`, `FIGURE_CAPTION`, `TABLE_CAPTION`, `CITATION`, `REFERENCE`, `CITATION_STYLE`, `SOURCE_FORMAT`
+
+**Validation**: At least one structural label must be present.
 
 ---
 
 ### Agent 2 — PARSE
+
+**Role**: Academic Paper Structure Parser
 
 **Goal**: Convert labelled content into a structured `paper_structure` JSON.
 
 **Output schema**:
 ```json
 {
+  "metadata": { "citation_style": "author-date", "source_format": "APA", "paper_type": "research" },
   "title": "string",
-  "authors": ["string"],
-  "abstract": { "text": "string", "word_count": 0 },
-  "keywords": ["string"],
-  "imrad": {
-    "introduction": true,
-    "methods": false,
-    "results": true,
-    "discussion": false
-  },
-  "sections": [
-    {
-      "heading": "string",
-      "level": 1,
-      "content_preview": "string",
-      "in_text_citations": ["string"]
-    }
-  ],
-  "figures": [{ "id": "Figure 1", "caption": "string" }],
-  "tables": [{ "id": "Table 1", "caption": "string" }],
-  "references": ["Full reference string"]
+  "authors": [{ "name": "string", "affiliations": ["string"], "is_corresponding": false, "email": null }],
+  "affiliations": [{ "key": "1", "institution": "string", "address": "string" }],
+  "abstract": { "text": "string", "word_count": 250, "has_explicit_label": true },
+  "keywords": ["keyword1", "keyword2"],
+  "sections": [{
+    "heading": "Introduction",
+    "level": 1,
+    "content": "full paragraph text...",
+    "subsections": [{ "heading": "Background", "level": 2, "content": "..." }]
+  }],
+  "figures": [{ "number": 1, "caption": "Figure 1. Caption text." }],
+  "tables": [{ "number": 1, "caption": "Table 1. Caption text." }],
+  "citations": [{ "id": "c1", "original_text": "(Smith, 2020)", "context": "surrounding text", "in_text_format": "author-date" }],
+  "references": [{
+    "id": "r1",
+    "original_text": "Smith, J. (2020). Title. Journal, 1(2), 3-4.",
+    "parsed": { "authors": "Smith, J.", "year": "2020", "title": "...", "journal": "...", "volume": "1", "issue": "2", "pages": "3-4", "doi": null }
+  }],
+  "acknowledgments": "text or null",
+  "author_contributions": "text or null",
+  "journal_metadata": { "journal": null, "volume": null, "doi": null }
 }
 ```
 
+**Validation**: All 11 required top-level keys present; sections must be non-empty.
+
 ---
 
-### Agent 3 — TRANSFORM
+### Agent 3 — INTERPRET
 
-**Goal**: Two-phase processing — Phase A scans violations inline, Phase B applies fixes and produces `docx_instructions`. Rules are loaded from `rules/*.json` and injected as part of the task description.
+**Role**: Journal Formatting Rules Analyst
 
-**Phase A — violation scan** (run first):
-Checks abstract word count, heading case, citation format, reference ordering, figure/table caption positions.
+**Goal**: Load journal rules from disk (or extract from URL for custom journals), analyze critical formatting requirements.
 
-**Phase B — transformation**:
-Produces `docx_instructions` with VERBATIM content from the original paper.
+**Tools**:
+- `load_journal_rules()` — cached disk read from `rules/*.json`
+- `extract_journal_rules_from_url()` — live URL extraction via BeautifulSoup
+
+**Modes** (via `RuleEngine`):
+- **Standard**: Load default rules from `rules/*.json`
+- **Semi-Custom**: Load defaults, then apply user overrides
+- **Full-Custom**: Extract rules from uploaded guidelines PDF via LLM
+
+**Output**: Enriched rules dictionary (original 11 keys + `critical_checks` + `style_summary`)
+
+**Validation**: All 11 required rule keys present.
+
+---
+
+### Agent 4 — TRANSFORM
+
+**Role**: Academic Document Formatter
+
+**Goal**: Two-phase processing — compare paper structure vs journal rules, then apply fixes.
+
+**Phase A — Violation Scan**:
+Checks abstract word count, heading case, citation format, reference ordering, figure/table captions.
+
+**Phase B — Transformation**:
+- Converts citations between styles (e.g., numbered `[1]` to author-date `(Smith et al., 2020)`)
+- Converts references between formats (e.g., NLM to APA)
+- Produces `docx_instructions` for the DOCX writer
+
+**Citation conversion examples** (APA):
+- 1 author: `(Smith, 2020)`
+- 2 authors: `(Smith & Jones, 2020)`
+- 3+ authors: `(Smith et al., 2020)`
+- Multiple: `(Smith, 2020; Jones & Brown, 2019)`
+
+**Style-specific prompts**: Each journal (APA, IEEE, Springer, Chicago, Vancouver) gets tailored prompt instructions with exact formatting requirements.
 
 **Output schema**:
 ```json
 {
-  "violations": [
-    { "rule_category": "citations", "rule_description": "...", "rule_reference": "APA 7th §8.11", "violation_found": "...", "fix_applied": "..." }
-  ],
-  "changes_made": [
-    { "what": "Reformatted 14 citations to APA format", "rule_reference": "APA 7th §8.11", "why": "Required by APA 7th §8.11" }
-  ],
+  "violations": [{ "type": "citations", "description": "...", "severity": "high" }],
+  "changes_made": ["Converted all citations to author-date format", "..."],
+  "citation_replacements": { "[1]": "(Smith, 2020)", "[2]": "(Jones et al., 2019)" },
+  "reference_conversions": [{ "id": "r1", "original_text": "...", "converted_text": "..." }],
   "docx_instructions": {
-    "rules": {},
+    "font": "Times New Roman",
+    "font_size_halfpoints": 24,
+    "line_spacing_twips": 480,
+    "margins": { "top": "1in", "bottom": "1in", "left": "1in", "right": "1in" },
     "sections": [
-      { "type": "title", "content": "Paper Title" },
-      { "type": "abstract", "content": "Abstract text..." },
-      { "type": "heading", "level": 1, "content": "Introduction" },
-      { "type": "body", "content": "Body paragraph text..." },
-      { "type": "reference", "content": "Smith, J. (2021). ..." }
+      { "type": "title_page", "content": "..." },
+      { "type": "abstract_page", "content": "..." },
+      { "type": "body", "content": "..." },
+      { "type": "references_page", "content": "..." }
     ]
-  },
-  "output_filename": "formatted_abc123.docx"
+  }
 }
 ```
 
-**Section types**: `title`, `abstract`, `keyword`, `heading` (with `level: 1|2|3`), `body`, `figure_caption`, `table_caption`, `reference`
-
-Applies `_sort_sections_by_canonical_order()` (IMRAD ordering: Introduction → Methods → Results → Discussion) and `_normalize_citation()` for citation style normalization.
-
-**DOCX output paths:**
-- **DOCX input**: `transform_docx_in_place()` — opens original DOCX and applies formatting in-place, preserving figures/tables/equations.
-- **PDF/TXT input**: `write_formatted_docx()` — rebuilds from extracted text (8A verbatim guard + 8B schema validation applied first).
+**Validation**: `docx_instructions.sections` must be non-empty.
 
 ---
 
-### Agent 4 — VALIDATE
+### Agent 5 — VALIDATE
+
+**Role**: Academic Compliance Scorer
 
 **Goal**: Run 7 mandatory compliance checks and produce a `compliance_report` with per-section scores 0-100.
 
 **7 LLM Compliance Checks** (weighted):
-1. Citations (22%): author-date format, & vs "and", et al. usage
-2. References (22%): APA format, alphabetical order, hanging indent
-3. Document Format (18%): font, spacing, margins, alignment
-4. Headings (13%): H1-H5 styles, IMRAD presence, no "Introduction" heading
-5. Abstract (12%): word count, label style, keywords
-6. Figures (6.5%): label format, caption position, sequential numbering
-7. Tables (6.5%): label format, caption position, sequential numbering
+1. Citations (25%): author-date format, & vs "and", et al. usage
+2. References (25%): APA format, alphabetical order, hanging indent, complete metadata
+3. Headings (15%): H1-H5 styles, IMRAD presence, correct case/bold/italic
+4. Document Format (10%): font, spacing, margins, alignment
+5. Abstract (10%): word count, label style, keywords
+6. Figures (7.5%): label format, caption position, sequential numbering
+7. Tables (7.5%): label format, caption position, sequential numbering
 
 **7 Deterministic Checks** (Python-exact, override LLM scores):
-1. Abstract word count — exact count vs max_words
+1. Abstract word count — exact count vs `max_words`
 2. Citation format match — regex pattern match
 3. Reference ordering — alphabetical sort check
-4. Citation ↔ reference consistency — bi-directional check
-5. DOI format — must use https://doi.org/xxxxx (APA §9.34)
-6. et al. period — must be "et al." with period (APA §8.17)
-7. Ampersand in parenthetical citations — & not "and" (APA §8.17)
+4. Citation-reference consistency — bi-directional cross-check
+5. DOI format — must use `https://doi.org/xxxxx`
+6. et al. period — must be "et al." with period
+7. Ampersand in parenthetical citations — `&` not "and"
 
-**Scoring**: Weighted formula across 7 sections. `_clamp_score()` enforces [0, 100] bounds. `_recompute_overall_score()` cross-checks the weighted formula for consistency. Score >= 80 sets `submission_ready: true`.
-
----
-
-## Reliability Features (8A/8B/8C)
-
-### 8A — Verbatim Content Guard
-
-Applies to the PDF/TXT rebuild path (`write_formatted_docx`) only. DOCX in-place path is already verbatim by design.
-
-- **Pass 1**: Filters empty/null-content sections (prevents blank paragraphs in output)
-- **Pass 2**: If abstract content is < 100 chars after LLM processing, restores it from the original extracted text via `split_into_sections()`
-
-```python
-def _guard_section_contents(sections: list, paper_content: Optional[str]) -> list
-```
-
-### 8B — Response Schema Validation
-
-Before any DOCX write, `docx_instructions` is validated against `DOCX_INSTRUCTIONS_SCHEMA` using `jsonschema`. Raises `TransformError` with a human-readable message on violation — catches LLM schema drift before it causes a cryptic `KeyError`.
-
-```python
-def _validate_docx_instructions(docx_instructions: dict) -> None
-```
-
-Non-blocking if `jsonschema` is unavailable (logs warning, continues).
-
-### 8C — Async Processing for Large Files
-
-Files >500KB are routed to `FastAPI.BackgroundTasks` to avoid HTTP timeouts:
-
-1. `/format` extracts text synchronously, then returns HTTP 202 with `{job_id, poll_url}`
-2. `_run_pipeline_job()` runs `run_pipeline()` in the background, writes result to `JOB_STORE[job_id]`
-3. Frontend polls `GET /status/{job_id}` every 4 seconds until `status === "done"`
-
-```python
-ASYNC_THRESHOLD = 500_000  # bytes — files above this go async
-JOB_STORE: dict = {}       # in-memory job store keyed by job_id
-```
-
-**Limitation**: Large DOCX files processed async use the text-rebuild path (figures not preserved) because the temp upload file is deleted before the background task runs.
+**Scoring**: Weighted formula across 7 sections. `_clamp_score()` enforces [0, 100] bounds. `_recompute_overall_score()` cross-checks the weighted average. Score >= 80 sets `submission_ready: true`.
 
 ---
 
@@ -242,49 +256,56 @@ JOB_STORE: dict = {}       # in-memory job store keyed by job_id
 ```
 backend/
 │
-├── agents/                      # CrewAI agent factory functions
-│   ├── __init__.py              # Exports create_*_agent() for all 5 agents
-│   ├── ingest_agent.py          # create_ingest_agent(llm) → Agent
-│   ├── parse_agent.py           # create_parse_agent(llm) → Agent
-│   ├── transform_agent.py       # create_transform_agent(llm) → Agent (Phase A + B)
-│   └── validate_agent.py        # create_validate_agent(llm) → Agent
+├── agents/                         # CrewAI agent factory functions
+│   ├── __init__.py                 # Exports create_*_agent() for all 5 agents
+│   ├── ingest_agent.py             # Agent 1: Structural labeling with markers
+│   ├── parse_agent.py              # Agent 2: JSON structure extraction
+│   ├── interpret_agent.py          # Agent 3: Rule loading + analysis
+│   ├── transform_agent.py          # Agent 4: Citation conversion + docx_instructions
+│   └── validate_agent.py           # Agent 5: 7-check compliance scoring
 │
-├── engine/
-│   └── format_engine.py         # DOCX formatting utilities
+├── engine/                         # Formatting engine
+│   ├── format_engine.py            # FormatEngine class: nested rules accessor
+│   └── rule_engine.py              # RuleEngine: 3-mode rule generation (standard/semi/full)
 │
-├── tools/
-│   ├── pdf_reader.py            # extract_pdf_text(path) → str
-│   ├── docx_reader.py           # extract_docx_text(path) → str
-│   ├── docx_writer.py           # write_formatted_docx() + transform_docx_in_place()
-│   ├── rule_loader.py           # load_rules(journal), JOURNAL_MAP, get_supported_journals()
-│   ├── text_chunker.py          # split_into_sections() → IMRAD sections + word counts
-│   ├── compliance_checker.py    # 7 deterministic checks (override LLM scores)
-│   ├── media_extractor.py       # Side-channel image/table extraction (PDF/DOCX)
-│   ├── rule_extractor.py        # extract_journal_rules_from_url() (BeautifulSoup)
-│   ├── logger.py                # get_logger(name) → logging.Logger (structured format)
-│   └── tool_errors.py           # ToolError, ParseError, LLMResponseError, TransformError,
-│                                #   ValidationError, DocumentWriteError, RuleLoadError
+├── tools/                          # Shared utility tools
+│   ├── pdf_reader.py               # PDF extraction: scan detection, header stripping, garble check
+│   ├── docx_reader.py              # DOCX extraction: plain text + structured (styles, bold, italic)
+│   ├── docx_writer.py              # 6 DOCX builders (APA, IEEE, Springer, Chicago, Vancouver, Generic)
+│   ├── rule_loader.py              # Journal rules JSON loader + JOURNAL_MAP + cache
+│   ├── rule_extractor.py           # URL-based journal rule extraction (BeautifulSoup)
+│   ├── text_chunker.py             # IMRAD section splitter + word count stats
+│   ├── compliance_checker.py       # 7 deterministic checks (non-LLM, override LLM scores)
+│   ├── media_extractor.py          # Side-channel image/table extraction (PDF/DOCX)
+│   ├── pre_format_scorer.py        # Quick pre-pipeline compliance scoring (5 categories)
+│   ├── logger.py                   # get_logger(name) → structured logging
+│   └── tool_errors.py              # 7 exception types: ToolError, ParseError, LLMResponseError, etc.
 │
-├── rules/                       # Journal formatting rule files
-│   ├── apa7.json
-│   ├── ieee.json
-│   ├── vancouver.json
-│   ├── springer.json
-│   └── chicago.json
+├── schemas/                        # JSON validation schemas
+│   └── rules_schema.json           # Schema for journal rules files
 │
-├── outputs/                     # Generated DOCX output files
-│                                #   (auto-cleaned on startup: files > 6h old removed)
+├── rules/                          # Journal formatting rule files
+│   ├── apa7.json                   # APA 7th Edition (author-date, double-spaced, Title Case)
+│   ├── ieee.json                   # IEEE (numbered, 2-column, 10pt)
+│   ├── vancouver.json              # Vancouver / ICMJE (numbered, superscript)
+│   ├── springer.json               # Springer Nature (numbered, 10pt, single-spaced)
+│   └── chicago.json                # Chicago 17th Edition (author-date or notes)
 │
-├── uploads/                     # Temporary upload directory
-│                                #   (each file deleted in finally block after processing)
+├── outputs/                        # Per-run output folders
+│   └── run_<id>/                   # Auto-cleaned after 6 hours
+│       ├── 1_ingest.txt            # Raw INGEST agent output
+│       ├── 2_parse.txt             # Raw PARSE agent output
+│       ├── 3_transform.txt         # Raw TRANSFORM agent output
+│       ├── 4_validate.txt          # Raw VALIDATE agent output
+│       ├── formatted_<id>.docx     # Generated DOCX file
+│       └── formatted_<id>.pdf      # Optional PDF (if LibreOffice available)
 │
-├── crew.py                      # run_pipeline() — orchestrates 5-agent CrewAI Crew
-│                                #   + caching, truncation, task output validation
-│
-├── main.py                      # FastAPI app: endpoints, validation, error mapping
-├── requirements.txt             # Python dependencies
-├── .env                         # Runtime secrets (never committed)
-└── .env.example                 # Environment variable template
+├── uploads/                        # Temporary upload directory (1h TTL)
+├── crew.py                         # run_pipeline(): orchestration, caching, JSON extraction, step timing
+├── main.py                         # FastAPI app: 9 endpoints, validation, DOC_STORE, JOB_STORE
+├── requirements.txt                # Python dependencies
+├── .env.example                    # Environment variable template
+└── .env                            # Runtime secrets (not committed)
 ```
 
 ---
@@ -298,32 +319,23 @@ backend/
 | Uvicorn | 0.29.0 | ASGI server |
 | CrewAI | >=0.36.0 | Multi-agent orchestration |
 | LiteLLM | (via CrewAI) | Gemini API adapter |
-| Google Gemini | 2.5-flash | LLM powering all 5 agents |
-| PyMuPDF (fitz) | 1.24.0 | PDF text extraction |
-| python-docx | 1.1.0 | DOCX read and write |
+| Google Gemini | 2.5 Flash | LLM powering all 5 agents (temperature=0) |
+| PyMuPDF (fitz) | >=1.24.0 | PDF text + image extraction |
+| python-docx | 1.1.0 | DOCX read, write, in-place transform |
 | pdfplumber | >=0.10.0 | PDF table extraction |
+| Mammoth | >=1.6.0 | DOCX-to-HTML preview conversion |
+| BeautifulSoup4 | >=4.12.0 | HTML parsing for URL rule extraction |
+| jsonschema | >=4.0.0 | JSON schema validation |
 | python-dotenv | >=1.0.0 | Environment variable loading |
-| jsonschema | >=4.0.0 | JSON validation |
 | python-multipart | 0.0.9 | Multipart file upload parsing |
 
 ---
 
 ## API Reference
 
-### Endpoints Summary
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | System status + supported journals |
-| `POST` | `/format` | Upload paper → run pipeline (sync or async) |
-| `GET` | `/download/{filename}` | Download generated DOCX |
-| `GET` | `/status/{job_id}` | Poll async job status (large files >500KB) |
-
----
-
 ### GET /health
 
-Returns system status, supported journals, and diagnostics.
+Returns system status, supported journals, uptime, and storage diagnostics.
 
 **Response 200:**
 ```json
@@ -347,100 +359,202 @@ Returns system status, supported journals, and diagnostics.
 
 ---
 
-### POST /format
+### POST /upload
 
-Upload and format a research paper.
+Upload a file, extract text, and reserve a `doc_id` for subsequent operations.
 
 **Content-Type**: `multipart/form-data`
 
-**Fields:**
-
 | Field | Type | Required | Constraints |
 |-------|------|----------|------------|
-| `file` | File | Yes | PDF or DOCX, max 10 MB |
-| `journal` | String | Yes | Must match `JOURNAL_MAP` key |
+| `file` | File | Yes | PDF, DOCX, or TXT; max 10 MB |
 
-**Sync response 200** (files <500KB):
+**Response 200:**
 ```json
 {
   "success": true,
-  "request_id": "3193503d",
-  "download_url": "/download/formatted_3193503d.docx",
-  "compliance_report": { ... },
-  "changes_made": [
-    { "what": "...", "rule_reference": "APA 7th §8.11", "why": "Required by APA 7th §8.11" }
-  ],
-  "interpretation_results": { "violations": [...], "total_violations": 3, "journal": "APA 7th Edition" },
-  "processing_time_seconds": 47.3,
-  "output_metadata": {
-    "filename": "formatted_3193503d.docx",
-    "size_bytes": 24576,
-    "size_kb": 24.0
-  },
-  "pipeline_metrics": {
-    "stage_times": {
-      "ingest": 9.2,
-      "parse": 11.4,
-      "interpret": 1.8,
-      "transform": 14.6,
-      "validate": 10.1
-    },
-    "total_runtime": 47.3
+  "doc_id": "a1b2c3d4",
+  "filename": "paper.pdf",
+  "file_type": "pdf",
+  "char_count": 45230,
+  "word_count": 7540,
+  "preview": "First 200 characters of extracted text...",
+  "size_kb": 234.5
+}
+```
+
+**Errors**: 413 (file too large), 422 (bad extension, no readable text, garbled text)
+
+---
+
+### POST /score/pre
+
+Quick pre-format compliance score (runs without the full pipeline).
+
+**Content-Type**: `multipart/form-data`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `doc_id` | String | Yes | Document ID from `/upload` |
+| `journal` | String | Yes | Target journal name |
+| `mode` | String | No | `standard`, `semi_custom`, or `full_custom` |
+| `overrides` | JSON String | No | User overrides (semi-custom mode) |
+| `custom_rules` | JSON String | No | Custom rules (full-custom mode) |
+
+**Response 200:**
+```json
+{
+  "success": true,
+  "doc_id": "a1b2c3d4",
+  "journal": "APA 7th Edition",
+  "pre_format_score": {
+    "total_score": 62,
+    "breakdown": {
+      "abstract": { "score": 70, "details": "Abstract label found" },
+      "headings": { "score": 55, "details": "IMRAD partially present" },
+      "citations": { "score": 80, "details": "Author-date format detected" },
+      "references": { "score": 50, "details": "Reference list found" },
+      "document": { "score": 60, "details": "Standard formatting" }
+    }
   }
 }
 ```
 
-**Error shape:**
+---
+
+### GET /journal-defaults/{journal}
+
+Fetch the overridable field schema for semi-custom mode.
+
+**Response 200:**
 ```json
 {
-  "success": false,
-  "error": "Human-readable error message",
-  "step": "validation | extraction | parse | interpret | transform | validate | llm | docx_writer"
+  "journal": "APA 7th Edition",
+  "overridable_fields": {
+    "document.font_size": { "label": "Font Size", "type": "select", "values": [8, 9, 10, 11, 12, 14, 16] },
+    "abstract.max_words": { "label": "Max Abstract Words", "type": "number", "min": 50, "max": 1000 },
+    "document.line_spacing": { "label": "Line Spacing", "type": "select", "values": [1.0, 1.15, 1.5, 2.0] }
+  }
 }
 ```
 
 ---
 
-**Async response 202** (files >500KB):
+### POST /format
+
+Trigger the async CrewAI pipeline. Returns immediately with a `job_id` for polling.
+
+**Content-Type**: `multipart/form-data`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `doc_id` | String | Yes (or `file`) | Document ID from `/upload` |
+| `file` | File | Yes (or `doc_id`) | Direct file upload (alternative) |
+| `journal` | String | Yes | Target journal name |
+| `mode` | String | No | `standard`, `semi_custom`, or `full_custom` |
+| `overrides` | JSON String | No | User overrides (semi-custom) |
+| `custom_rules` | JSON String | No | Custom rules (full-custom) |
+| `guideline_pdf` | File | No | Guidelines PDF (full-custom) |
+
+**Response 202:**
 ```json
 {
   "success": true,
-  "async": true,
-  "job_id": "3193503d",
+  "job_id": "a1b2c3d4",
   "status": "processing",
-  "poll_url": "/status/3193503d"
+  "poll_url": "/format/status/a1b2c3d4",
+  "message": "Pipeline started. Poll /format/status/a1b2c3d4 for progress."
 }
 ```
 
 ---
 
-### GET /status/{job_id}
+### GET /format/status/{job_id}
 
-Poll async background job status.
+Poll pipeline progress. Recommended interval: 2 seconds.
 
-**Path param**: `job_id` — 8-char hex, validated as `^[a-f0-9]{8}$`.
-
-**Responses:**
+**Response (processing):**
 ```json
-{ "status": "processing" }
-{ "status": "done", "result": { ...same shape as /format 200... } }
+{
+  "status": "processing",
+  "progress": 45,
+  "step": "TRANSFORM",
+  "step_index": 3,
+  "total_steps": 5,
+  "elapsed_seconds": 28.4
+}
+```
+
+**Response (done):**
+```json
+{ "status": "done", "progress": 100 }
+```
+
+**Response (error):**
+```json
 { "status": "error", "error": "Pipeline error message" }
 ```
 
+**Headers**: `Cache-Control: no-store` (fresh data every request)
+
 ---
 
-### GET /download/{filename}
+### GET /format/result/{job_id}
 
-Serve a formatted DOCX file.
+Fetch completed pipeline results.
 
-**Path param**: `filename` — exact filename from `download_url` in `/format` response.
+**Response 200:**
+```json
+{
+  "success": true,
+  "download_url": "/download/run_a1b2c3d4/formatted_a1b2c3d4.docx",
+  "compliance_report": {
+    "overall_score": 85,
+    "submission_ready": true,
+    "breakdown": {
+      "citations": { "score": 90, "issues": [] },
+      "references": { "score": 85, "issues": ["2 references missing DOI"] },
+      "headings": { "score": 80, "issues": [] },
+      "document_format": { "score": 95, "issues": [] },
+      "abstract": { "score": 70, "issues": ["Word count 312 exceeds 250 limit"] },
+      "figures": { "score": 100, "issues": [] },
+      "tables": { "score": 100, "issues": [] }
+    },
+    "warnings": ["Abstract exceeds word limit by 62 words"],
+    "summary": "Manuscript meets APA requirements with minor issues."
+  },
+  "changes_made": [
+    { "what": "Converted 14 citations to author-date format", "rule_reference": "APA 7th §8.11", "why": "Required by APA" }
+  ],
+  "processing_time_seconds": 47.3,
+  "fidelity_warnings": ["PDF source: figures and tables may not be preserved"]
+}
+```
 
-**Response 200**: Binary DOCX stream with `Content-Disposition: attachment`.
+**Status codes**: 200 (done), 202 (still processing), 422 (pipeline error)
 
-**Security validations** (in order):
-1. Regex: `^[a-zA-Z0-9_\-\.]+$` — rejects any path traversal
-2. Extension: must end with `.docx`
-3. Path prefix: resolved path must start with `outputs/` absolute path
+---
+
+### GET /download/{filepath}
+
+Serve a formatted DOCX or PDF file.
+
+| Parameter | Description |
+|-----------|-------------|
+| `filepath` | Path within `outputs/` (e.g., `run_abc123/formatted_abc123.docx`) |
+| `format` | Query param: `docx` (default) or `pdf` |
+
+**Response 200**: Binary file with `Content-Disposition: attachment`
+
+**Security**: Regex validation + path prefix check confines to `outputs/` directory.
+
+---
+
+### GET /preview/{filepath}
+
+HTML preview of a formatted DOCX file (rendered via Mammoth library).
+
+**Response 200**: Full HTML document with column layout support (e.g., IEEE 2-column).
 
 ---
 
@@ -455,22 +569,12 @@ Serve a formatted DOCX file.
 ### Steps
 
 ```bash
-# 1. Navigate to backend directory
 cd backend
-
-# 2. Create a virtual environment
 python3 -m venv venv
-
-# 3. Activate virtual environment
-source venv/bin/activate       # Linux / macOS
-# venv\Scripts\activate        # Windows
-
-# 4. Install dependencies
+source venv/bin/activate       # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-
-# 5. Set up environment
 cp .env.example .env
-# Open .env and set GEMINI_API_KEY=your-key-here
+# Edit .env and set GEMINI_API_KEY=your-key-here
 ```
 
 ---
@@ -482,7 +586,7 @@ cp .env.example .env
 | `GEMINI_API_KEY` | Yes | — | Google Gemini API key |
 | `GOOGLE_API_KEY` | Yes | — | Same key (LiteLLM reads this alias) |
 | `GEMINI_MODEL` | No | `gemini-2.5-flash` | Gemini model identifier |
-| `GEMINI_MAX_TOKENS` | No | `4096` | Max tokens per LLM call |
+| `GEMINI_MAX_TOKENS` | No | `65536` | Max tokens per LLM call |
 | `CORS_ORIGINS` | No | `http://localhost:5173,http://localhost:3000` | Comma-separated allowed CORS origins |
 | `BACKEND_HOST` | No | `0.0.0.0` | Uvicorn bind host |
 | `BACKEND_PORT` | No | `8000` | Uvicorn bind port |
@@ -513,18 +617,15 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
 curl http://localhost:8000/health
 ```
 
-Expected: `{"status": "ok", ...}`
-
 ### Startup Logs
 
-On successful start you will see:
 ```
 ==================================================
 Agent Paperpal API starting up
 Supported journals: ['APA 7th Edition', 'IEEE', 'Vancouver', 'Springer', 'Chicago 17th Edition']
 Upload dir:  /path/to/backend/uploads
 Output dir:  /path/to/backend/outputs
-GEMINI_API_KEY: set ✓
+GEMINI_API_KEY: set
 ==================================================
 ```
 
@@ -532,15 +633,20 @@ GEMINI_API_KEY: set ✓
 
 ## Input Validation
 
-The `/format` endpoint enforces 5 sequential guards before executing the pipeline:
+The `/upload` endpoint enforces 5 sequential guards:
 
 | Guard | Check | HTTP Status |
 |-------|-------|------------|
-| 1. Extension | File must be `.pdf` or `.docx` | 422 |
-| 2. Journal | Must be a key in `JOURNAL_MAP` | 422 |
-| 3. File size | Must be <= 10 MB | 413 |
+| 1. Extension | File must be `.pdf`, `.docx`, or `.txt` | 422 |
+| 2. File size | Must be <= 10 MB | 413 |
+| 3. Text extraction | PDF/DOCX/TXT text extraction must succeed | 422 |
 | 4. Text length | Extracted text must be >= 100 chars | 422 |
 | 5. Alpha ratio | >= 30% alphabetic characters (rejects scanned/image-only PDFs) | 422 |
+
+The `/format` endpoint additionally validates:
+- Journal name must be a key in `JOURNAL_MAP`
+- `doc_id` must exist in `DOC_STORE` (or `file` must be provided)
+- Overrides (if provided) must match the allowlist schema
 
 All error responses include `{ "success": false, "error": "...", "step": "..." }`.
 
@@ -552,17 +658,64 @@ All error responses include `{ "success": false, "error": "...", "step": "..." }
 
 ```
 ToolError (base)
-├── ParseError         — paper content too short or unparseable
-├── LLMResponseError   — Gemini returned invalid/empty JSON
-├── TransformError     — transform agent failed or missing docx_instructions
-├── ValidationError    — validate agent failed or missing overall_score
-├── DocumentWriteError — DOCX file write failed
-└── RuleLoadError      — journal rules file not found
+├── FileProcessingError  — file I/O or extraction failed
+├── ExtractionError      — text extraction returned no usable content
+├── ParseError           — paper structure too short or unparseable
+├── LLMResponseError     — Gemini returned invalid/empty JSON
+├── TransformError       — transform agent failed or missing docx_instructions
+├── ValidationError      — validate agent failed or missing overall_score
+├── RuleLoadError        — journal rules file not found
+└── DocumentWriteError   — DOCX file write failed
 ```
 
-Each exception maps to a specific HTTP status and `step` field so the frontend can display contextual error messages.
+Each exception maps to a specific HTTP status and `step` field for contextual frontend error messages.
 
-A global `@app.exception_handler(Exception)` catches any unhandled exceptions and returns a sanitized 500 response — stack traces are never exposed to clients.
+A global `@app.exception_handler(Exception)` catches unhandled exceptions and returns a sanitized 500 response — stack traces are never exposed to clients.
+
+---
+
+## Formatting Modes
+
+| Mode | Description | Rule Source |
+|------|-------------|-------------|
+| `standard` | Use journal defaults as-is | `rules/*.json` |
+| `semi_custom` | Override specific fields (13 overridable fields) | `rules/*.json` + user overrides merged via `RuleEngine` |
+| `full_custom` | Upload a guidelines PDF — LLM extracts rules | Uploaded PDF → LLM extraction → validated rules dict |
+
+### Semi-Custom Overridable Fields
+
+| Field | Type | Values |
+|-------|------|--------|
+| `abstract.max_words` | Number | 50-1000 |
+| `document.font` | Select | Times New Roman, Arial, Calibri, Georgia |
+| `document.font_size` | Select | 8-16pt |
+| `document.line_spacing` | Select | 1.0, 1.15, 1.5, 2.0 |
+| `document.alignment` | Select | left, justify, center, right |
+| `document.margins.top` | Select | 0.5in-2in |
+| `document.margins.bottom` | Select | 0.5in-2in |
+| `document.margins.left` | Select | 0.5in-2in |
+| `document.margins.right` | Select | 0.5in-2in |
+| `headings.numbering_style` | Select | roman, numeric, alpha |
+| `references.style` | Select | ieee, apa, mla, chicago, vancouver |
+| `figures.caption_position` | Toggle | above, below |
+| `tables.caption_position` | Toggle | above, below |
+
+---
+
+## DOCX Builders
+
+The `tools/docx_writer.py` module contains 6 style-specific DOCX builders, each implementing the exact formatting requirements of its target journal:
+
+| Builder | Journal | Key Features |
+|---------|---------|-------------|
+| `build_apa_docx()` | APA 7th Edition | Page-based (title page, abstract page, body, references), double-spaced, hanging indent, H1-H5 hierarchy, running header |
+| `build_ieee_docx()` | IEEE | 2-column layout, 10pt font, single-spaced, numbered citations, conference header |
+| `build_springer_docx()` | Springer Nature | 10pt, single-spaced, justified, hierarchical numbered headings |
+| `build_chicago_docx()` | Chicago 17th | 12pt, double-spaced, left-aligned, un-numbered headings |
+| `build_vancouver_docx()` | Vancouver / ICMJE | 12pt, double-spaced, left-aligned, UPPERCASE H1 headings |
+| `write_formatted_docx()` | Generic | Rules-driven generic builder for unknown styles |
+
+Additionally, `transform_docx_in_place()` modifies an existing DOCX file in-place (used when input is DOCX, preserving figures/tables/equations).
 
 ---
 
@@ -570,30 +723,22 @@ A global `@app.exception_handler(Exception)` catches any unhandled exceptions an
 
 ```json
 {
-  "overall_score": 84,
+  "overall_score": 85,
   "submission_ready": true,
   "breakdown": {
-    "document_format": { "score": 90, "issues": [] },
-    "abstract":        { "score": 75, "issues": ["Word count 312 exceeds 250 limit"] },
-    "headings":        { "score": 95, "issues": [] },
-    "citations":       { "score": 80, "issues": [] },
-    "references":      { "score": 85, "issues": [] },
-    "figures":         { "score": 100, "issues": [] },
-    "tables":          { "score": 70, "issues": ["Table 2 missing title"] }
+    "citations": { "score": 90, "issues": [] },
+    "references": { "score": 85, "issues": ["2 references missing DOI"] },
+    "headings": { "score": 80, "issues": [] },
+    "document_format": { "score": 95, "issues": [] },
+    "abstract": { "score": 70, "issues": ["Word count exceeds limit"] },
+    "figures": { "score": 100, "issues": [] },
+    "tables": { "score": 100, "issues": [] }
   },
-  "changes_made": ["Reformatted 14 in-text citations to APA style"],
-  "imrad_check": {
-    "introduction": true,
-    "methods": true,
-    "results": true,
-    "discussion": false
-  },
-  "citation_consistency": {
-    "orphan_citations": [],
-    "uncited_references": ["Smith et al. 2019"]
-  },
-  "warnings": ["3 references are older than 10 years"],
-  "recommendations": ["Add a Discussion section to complete IMRAD structure"]
+  "changes_made": [
+    { "what": "Converted citations", "rule_reference": "APA 7th §8.11", "why": "Required" }
+  ],
+  "warnings": ["Abstract exceeds word limit"],
+  "summary": "Manuscript meets APA requirements with minor issues."
 }
 ```
 
@@ -610,25 +755,21 @@ A global `@app.exception_handler(Exception)` catches any unhandled exceptions an
 
 ## Journal Rules Schema
 
-Each `rules/*.json` file follows this structure (15 categories for APA):
+Each `rules/*.json` file follows this structure:
 
 ```json
 {
   "style_name": "APA 7th Edition",
-  "document": { "font", "font_size", "line_spacing", "margins", "alignment", "columns" },
-  "title_page": { "title_case", "title_bold", "title_centered", "title_font_size" },
-  "abstract": { "label", "max_words", "keywords_present", "keywords_italic" },
-  "headings": { "H1"-"H5" with bold, italic, centered, indent, inline_with_text, case },
-  "citations": { "style", "format_one_author"-"format_three_plus", "narrative_*", "same_author_same_year", "no_date", "in_press" },
-  "references": { "ordering", "hanging_indent", "max_authors_before_et_al", "formats" },
-  "figures": { "label_prefix", "caption_position", "numbering" },
-  "tables": { "label_prefix", "caption_position", "border_style", "numbering" },
-  "equations": { "numbering", "numbering_format" },
-  "block_quotes": { "threshold_words", "left_indent", "no_quotation_marks" },
-  "appendices": { "label_format", "label_centered", "label_bold" },
-  "footnotes": { "position", "font_size", "line_spacing" },
-  "statistical_notation": { "italic_symbols": ["M", "SD", "SE", "p", "F", "t", "r", "n", "N"] },
-  "general_rules": { "doi_format", "et_al_threshold", "use_ampersand_in_citations", "oxford_comma" }
+  "document": { "font": "Times New Roman", "font_size": 12, "line_spacing": 2.0, "margins": {...}, "alignment": "left", "columns": 1 },
+  "title_page": { "title_case": "Title Case", "title_bold": true, "title_centered": true },
+  "abstract": { "label": "Abstract", "max_words": 250, "keywords_present": true, "keywords_italic": true },
+  "headings": { "H1": { "bold": true, "centered": true, "case": "Title Case" }, "H2": {...}, "H3": {...} },
+  "citations": { "style": "author-date", "format_one_author": "(Smith, 2020)", "et_al_threshold": 3 },
+  "references": { "ordering": "alphabetical", "hanging_indent": true, "format": "Author, F. M. (Year). Title..." },
+  "figures": { "caption_position": "below", "label_bold": true },
+  "tables": { "caption_position": "above", "label_bold": true },
+  "equations": { "numbering": "right-aligned" },
+  "general_rules": { "doi_format": "https://doi.org/xxxxx", "et_al_threshold": 3, "use_ampersand_in_citations": true }
 }
 ```
 
@@ -638,38 +779,26 @@ Each `rules/*.json` file follows this structure (15 categories for APA):
 
 ## Performance & Caching
 
-### Async Processing (8C)
-
-Files >500KB are processed as background jobs. Text is extracted synchronously before the job starts — the temp file is deleted when the HTTP response is sent.
-
-```python
-ASYNC_THRESHOLD = 500_000  # bytes
-```
-
-Frontend polls `/status/{job_id}` every 4 seconds (max 150 polls / 10 minutes).
-
 ### Pipeline Cache
 
-Identical submissions (same paper content + journal) are served from an in-memory SHA-256 keyed dictionary without re-running the pipeline:
+Identical submissions (same paper content + journal + mode) are served from an in-memory SHA-256 keyed dictionary:
 
 ```python
 cache_key = hashlib.sha256(f"{journal}::{paper_text}".encode()).hexdigest()
-if cache_key in PIPELINE_CACHE:
-    return PIPELINE_CACHE[cache_key]   # instant
 ```
 
 Cache persists for the lifetime of the Uvicorn process.
 
 ### Content Truncation
 
-Papers exceeding 32,000 characters are truncated to stay within Gemini's context window:
+Papers exceeding 32,000 characters are truncated:
 - First 24,000 chars (document body)
 - Last 8,000 chars (references section)
 - Separated by a `[... CONTENT TRUNCATED ...]` marker
 
 ### Stage Timing
 
-The `_StepTimer` callback logs wall-clock time per pipeline step:
+The `_StepTimer` callback logs wall-clock time per pipeline step and invokes the progress callback:
 ```
 [PIPELINE] Step 1/5 — INGEST     completed in 9.24s
 [PIPELINE] Step 2/5 — PARSE      completed in 11.42s
@@ -678,20 +807,74 @@ The `_StepTimer` callback logs wall-clock time per pipeline step:
 [PIPELINE] Step 5/5 — VALIDATE   completed in 10.07s
 ```
 
+### Robust JSON Extraction
+
+`extract_json_from_llm()` implements 8 fallback strategies for parsing LLM output:
+1. Direct `json.loads()`
+2. Strip markdown code fences
+3. Find largest balanced-bracket JSON block
+4. Handle trailing commas
+5. Handle Python literal syntax (True/False/None)
+6. Handle single quotes
+7. Extract from Gemini reasoning blocks
+8. Regex-based key-value extraction
+
+---
+
+## In-Memory Stores
+
+### DOC_STORE (document metadata)
+
+```python
+DOC_STORE = {
+    "doc_id_hex8": {
+        "text": "extracted text",
+        "ext": "pdf",
+        "filename": "original.pdf",
+        "upload_path": "/path/to/uploads/doc_id_filename",
+        "size_kb": 123.4,
+        "created_at": timestamp  # Auto-cleaned after 1 hour
+    }
+}
+```
+
+### JOB_STORE (pipeline jobs)
+
+```python
+JOB_STORE = {
+    "job_id_hex8": {
+        "status": "processing",  # processing | done | error
+        "progress": 45,          # 0-100
+        "step_index": 3,
+        "step_name": "TRANSFORM",
+        "created_at": timestamp,
+        "result": {...},         # Set when status=done
+        "error": "..."           # Set when status=error
+    }
+}
+```
+
+### Other Caches
+
+- **PIPELINE_CACHE**: `{ sha256_hash: pipeline_result }` — in `crew.py`
+- **_RULE_CACHE**: `{ filename: parsed_rules_dict }` — in `tools/rule_loader.py`
+- **_RULE_ENGINE_CACHE**: `{ journal_name: rules }` — in `agents/interpret_agent.py`
+
 ---
 
 ## Security
 
 | Concern | Implementation |
 |---------|---------------|
-| Path traversal | Filename regex + path prefix check in `/download` |
+| Path traversal | Filename regex + resolved path must start with `outputs/` |
 | Upload injection | Extension whitelist, content extracted to temp file |
 | Stack trace exposure | Global exception handler returns generic messages |
 | Secrets | `.env` file, never committed. `.gitignore` includes `.env` |
-| File cleanup | Upload temp files deleted in `finally` block |
-| Old file cleanup | `outputs/` files older than 6 hours deleted on startup |
+| File cleanup | Upload files auto-expire after 1 hour |
+| Old output cleanup | `outputs/run_*` folders older than 6 hours deleted on startup |
 | CORS | Configurable whitelist, defaults to `localhost` only |
 | Input sanitization | Filename sanitized with regex before disk write |
+| Job ID validation | `^[a-f0-9]{8}$` regex on all job/doc ID lookups |
 
 ---
 
@@ -703,42 +886,47 @@ The `_StepTimer` callback logs wall-clock time per pipeline step:
 # Health check
 curl http://localhost:8000/health
 
-# Format a paper
-curl -X POST http://localhost:8000/format \
-  -F "file=@/path/to/paper.pdf" \
+# Upload a paper
+curl -X POST http://localhost:8000/upload -F "file=@paper.pdf"
+
+# Pre-format score
+curl -X POST http://localhost:8000/score/pre \
+  -F "doc_id=a1b2c3d4" \
   -F "journal=APA 7th Edition"
 
-# Download formatted output
-curl -O http://localhost:8000/download/formatted_abc123.docx
+# Format (async)
+curl -X POST http://localhost:8000/format \
+  -F "doc_id=a1b2c3d4" \
+  -F "journal=APA 7th Edition"
+
+# Poll status
+curl http://localhost:8000/format/status/a1b2c3d4
+
+# Get result
+curl http://localhost:8000/format/result/a1b2c3d4
+
+# Download
+curl -O http://localhost:8000/download/run_a1b2c3d4/formatted_a1b2c3d4.docx
 ```
 
-### Unit Testing (pytest)
-
-```bash
-cd backend
-source venv/bin/activate
-pip install pytest pytest-asyncio httpx
-python -m pytest tests/ -v --tb=short
-```
-
-### Test Scenarios to Cover
+### Test Scenarios
 
 | Scenario | Expected |
 |----------|---------|
-| Upload unsupported file (`.txt`) | 422, step: validation |
+| Upload unsupported file (`.jpg`) | 422, step: validation |
 | Upload unknown journal | 422, step: validation |
 | Upload file > 10 MB | 413 |
-| Upload scanned PDF (no extractable text) | 422, step: extraction |
-| Upload valid PDF + valid journal | 200, download_url present |
-| Download with path traversal (`../secret`) | 400, invalid filename |
-| Download non-existent file | 404 |
-| Duplicate submission (same paper + journal) | 200, instant (cache hit) |
+| Upload scanned PDF | 422, step: extraction |
+| Upload valid PDF + valid journal | 202, job_id present |
+| Poll non-existent job | 404 |
+| Download with path traversal | 400, invalid filename |
+| Duplicate submission (cache hit) | 200, instant |
 
 ---
 
 ## Deployment
 
-### Docker (Recommended)
+### Docker
 
 ```dockerfile
 FROM python:3.11-slim
@@ -762,13 +950,13 @@ docker run -p 8000:8000 \
   agent-paperpal-backend
 ```
 
-### Environment Checklist Before Deployment
+### Deployment Checklist
 
 - [ ] `GEMINI_API_KEY` set in production environment
 - [ ] `CORS_ORIGINS` updated to production frontend URL
 - [ ] `outputs/` directory is writable
 - [ ] `rules/` directory contains all 5 JSON files
-- [ ] `.env` file is NOT included in Docker image / deployment artifact
+- [ ] `.env` file is NOT included in Docker image
 
 ---
 
