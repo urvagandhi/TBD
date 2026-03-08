@@ -47,7 +47,7 @@ litellm.max_tokens = int(os.getenv("GEMINI_MAX_TOKENS", "65536"))
 # Set global litellm request timeout so httpx doesn't use its own (low) default.
 litellm.request_timeout = int(os.getenv("LLM_TIMEOUT", "300"))
 # Retry on transient failures (429, 500, timeout)
-litellm.num_retries = int(os.getenv("LLM_MAX_RETRIES", "1"))
+litellm.num_retries = int(os.getenv("LLM_MAX_RETRIES", "3"))
 
 logger = get_logger(__name__)
 
@@ -837,16 +837,22 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
     model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     llm_timeout = int(os.getenv("LLM_TIMEOUT", "300"))
 
-    # Use high max_tokens to prevent truncation — Gemini Flash uses
-    # chain-of-thought "Thought:" tokens that consume output budget.
+    # Gemini 2.5 Flash "thinking" tokens share the max_tokens budget.
+    # Without a cap, thinking can consume the entire budget → empty response.
+    # Budget split: ~16k thinking + ~49k output = 65536 total.
     max_tokens = int(os.getenv("GEMINI_MAX_TOKENS", "65536"))
+    thinking_budget = int(os.getenv("GEMINI_THINKING_BUDGET", "16384"))
     llm = LLM(
         model=f"gemini/{model_name}",
         timeout=llm_timeout,
         temperature=0,
         max_tokens=max_tokens,
+        thinking={"type": "enabled", "budget_tokens": thinking_budget},
     )
-    logger.info("[PIPELINE] LLM = %s (max_tokens=%d)", model_name, max_tokens)
+    logger.info(
+        "[PIPELINE] LLM = %s (max_tokens=%d, thinking_budget=%d)",
+        model_name, max_tokens, thinking_budget,
+    )
 
     if rules_override:
         logger.info("[PIPELINE] Using pre-merged rules (with overrides) — %d sections", len(rules_override))
