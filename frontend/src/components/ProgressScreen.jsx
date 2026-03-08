@@ -4,10 +4,9 @@ import axios from 'axios'
 const API = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
 
 const STEPS = [
-  { label: 'Extracting structure',    sublabel: 'Reading and parsing your document' },
-  { label: 'Applying format rules',   sublabel: 'Fixing fonts, headings, citations' },
-  { label: 'Validating citations',    sublabel: 'Checking references and cross-links' },
-  { label: 'Generating document',     sublabel: 'Writing your formatted DOCX' },
+  { label: 'Parsing & extracting structure', sublabel: 'Reading and analyzing your document' },
+  { label: 'Applying format rules',          sublabel: 'Fixing fonts, headings, citations' },
+  { label: 'Validating & generating',        sublabel: 'Checking compliance and writing DOCX' },
 ]
 
 // SVG icons for each step
@@ -24,11 +23,6 @@ const StepIcons = {
     </svg>
   ),
   2: (
-    <svg width="20" height="20" fill="none" viewBox="0 0 24 24">
-      <path d="M10 11h-4a1 1 0 01-1-1V6a1 1 0 011-1h3a1 1 0 011 1v5zm0 0a4 4 0 01-4 4M20 11h-4a1 1 0 01-1-1V6a1 1 0 011-1h3a1 1 0 011 1v5zm0 0a4 4 0 01-4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-    </svg>
-  ),
-  3: (
     <svg width="20" height="20" fill="none" viewBox="0 0 24 24">
       <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
       <polyline points="7 10 12 15 17 10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>

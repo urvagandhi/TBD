@@ -1,8 +1,8 @@
 """
-Agent 2: PARSE — Extract complete structured metadata from labelled paper text.
+Agent 1: PARSE — Extract complete structured metadata from paper text.
 
-Consumes the labelled_text produced by the Ingest agent and returns a strict
-paper_structure JSON consumed by the Transform and Validate agents.
+Receives raw or pre-labeled paper text and returns a strict paper_structure
+JSON consumed by the Transform and Validate agents.
 
 Schema matches APA_Pipeline_Complete_Prompts.md §3 exactly.
 """
@@ -65,11 +65,22 @@ def _safe_context(context: dict, key: str) -> Any:
 
 
 # ── System prompt from APA_Pipeline_Complete_Prompts.md §3 ──────────────────
-PARSE_SYSTEM_PROMPT = """You are a structured data extractor. You receive a labeled academic paper (output from the INGEST agent) and extract a structured JSON object containing every paper element.
+PARSE_SYSTEM_PROMPT = """You are a structured data extractor. You receive an academic paper (raw or pre-labeled with [SECTION: ...] markers) and extract a structured JSON object containing every paper element.
 
 ## YOUR TASK
 
-Parse the labeled text and produce a JSON object with the following schema.
+1. Identify every structural element: title, authors, abstract, keywords, sections, figures, tables, citations, references, acknowledgments.
+2. Detect the citation style used in the paper — this is CRITICAL for downstream formatting:
+   - Scan in-text citations: if they use (Author, Year) patterns → "author-date"
+   - If they use [1], (1), superscript numbers, or [1-3] → "numbered"
+3. Detect the source format:
+   - Papers from PNAS, Nature, Science, Cell, Lancet use NLM/Vancouver numbered style → "NLM"
+   - Papers using (Author, Year) with APA-style references → "APA"
+   - Otherwise → "other"
+4. Merge partial paragraphs split by PDF extraction:
+   - Lines ending without sentence-end punctuation (. ? ! :) AND next line starts lowercase → merge into one paragraph
+   - Hyphenated line breaks like "entero-\\nhemorrhagic" → merge to "enterohemorrhagic"
+5. Parse the text into the following JSON schema.
 
 ## OUTPUT JSON SCHEMA
 
@@ -172,6 +183,25 @@ Parse the labeled text and produce a JSON object with the following schema.
 7. The sections array must follow the paper's actual order.
 8. Merge partial paragraphs that were split by PDF extraction into complete paragraphs.
 
+## CITATION STYLE DETECTION (MANDATORY)
+
+You MUST correctly set metadata.citation_style and metadata.source_format:
+
+- **Numbered citations**: Look for [1], (1), superscript ¹, [1,2], [1-5], (1-3) patterns in body text.
+  References section will have numbered entries: "1. Author..." or "[1] Author..."
+  → citation_style: "numbered"
+
+- **Author-date citations**: Look for (Smith, 2020), (Smith & Jones, 2020), (Smith et al., 2020) patterns.
+  References section will list entries alphabetically by author last name.
+  → citation_style: "author-date"
+
+- **Source format detection**:
+  - PNAS, Nature, Science, Cell, Lancet, BMJ, NEJM → source_format: "NLM" (these use Vancouver/NLM numbered style)
+  - APA-style journals with (Author, Year) → source_format: "APA"
+  - If unclear → source_format: "other"
+
+Getting this wrong causes the entire downstream formatting to apply incorrect citation/reference rules.
+
 ## OUTPUT
 
 Return ONLY valid JSON. No markdown, no explanation, no backticks."""
@@ -179,8 +209,9 @@ Return ONLY valid JSON. No markdown, no explanation, no backticks."""
 
 def create_parse_agent(llm: Any) -> Agent:
     """
-    Agent 2: PARSE — Produce paper_structure JSON from labelled text.
+    Agent 1: PARSE — Produce paper_structure JSON from paper text.
 
+    Handles both structural detection and data extraction in a single pass.
     Uses the comprehensive schema from APA Pipeline spec.
     """
     logger.info("[PARSE] Agent created")
@@ -192,15 +223,20 @@ def create_parse_agent(llm: Any) -> Agent:
             "You are a precision data extraction specialist trained on academic publishing "
             "metadata standards. You have extracted structured data from over 100,000 research "
             "papers across all major scientific publishers: Elsevier, Springer, IEEE, Nature, "
-            "PLOS, and Wiley. "
+            "PNAS, PLOS, and Wiley. "
             "You produce deterministic, schema-compliant JSON every single time — your output is "
             "consumed directly by the Transform and Validate agents with no human review. "
             "You parse EVERY reference into its component parts: authors, year, title, journal, "
-            "volume, issue, pages, DOI. You detect citation styles by scanning inline patterns. "
+            "volume, issue, pages, DOI. "
+            "You are an expert at detecting citation styles: you distinguish numbered citations "
+            "([1], (1), superscripts) from author-date citations ((Smith, 2020)) by scanning "
+            "the actual in-text patterns. You recognize that PNAS, Nature, Science, Cell papers "
+            "use NLM/Vancouver numbered citations which must be flagged as source_format 'NLM' "
+            "for downstream conversion. Getting citation_style wrong breaks the entire pipeline. "
             "You count words with mathematical precision. "
             "You never hallucinate content — every value is grounded in the actual document text. "
-            "Before returning, you self-check: all required keys present, sections non-empty, "
-            "references fully parsed."
+            "Before returning, you self-check: all required keys present, metadata.citation_style "
+            "and metadata.source_format set correctly, sections non-empty, references fully parsed."
         ),
         llm=llm,
         allow_delegation=False,
