@@ -14,7 +14,6 @@ from crewai import Agent, Crew, Process, Task, LLM
 from dotenv import load_dotenv
 
 from agents import (
-    create_ingest_agent,
     create_parse_agent,
     create_transform_agent,
     create_validate_agent,
@@ -112,7 +111,7 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 # In-memory pipeline cache: identical (paper, journal) pairs return instantly
 PIPELINE_CACHE: dict = {}
 
-_STEP_NAMES = ["INGEST", "PARSE", "TRANSFORM", "VALIDATE"]
+_STEP_NAMES = ["PARSE", "TRANSFORM", "VALIDATE"]
 
 # Rule reference lookup — keyed by journal (first word, lowercase) → topic → section ref
 # Used to enrich changes_made entries with authoritative rule citations for judge visibility.
@@ -673,7 +672,7 @@ class _StepTimer:
     """Logs wall-clock duration of each CrewAI task, updates progress callback."""
 
     # Progress percentages after each step completes
-    _STEP_PROGRESS = [20, 40, 75, 95]
+    _STEP_PROGRESS = [30, 75, 95]
 
     def __init__(self, progress_callback=None) -> None:
         self._step_index = 0
@@ -699,7 +698,7 @@ class _StepTimer:
         )
 
         logger.info(
-            "[PIPELINE] Step %d/4 — %-10s completed in %.2fs (total: %.1fs, progress: %d%%)",
+            "[PIPELINE] Step %d/3 — %-10s completed in %.2fs (total: %.1fs, progress: %d%%)",
             self._step_index + 1, name, elapsed, total_elapsed, progress,
         )
 
@@ -715,6 +714,14 @@ class _StepTimer:
 
         self._step_index += 1
         self._step_start = time.time()
+
+        # Log the next step starting (if there is one)
+        if self._step_index < len(_STEP_NAMES):
+            next_name = _STEP_NAMES[self._step_index]
+            logger.info(
+                "[PIPELINE] >>> Starting step %d/3 — %s...",
+                self._step_index + 1, next_name,
+            )
 
 
 def _validate_task_outputs(crew: Crew) -> str:
@@ -736,16 +743,14 @@ def _validate_task_outputs(crew: Crew) -> str:
     run_dir = Path(__file__).parent / "outputs" / f"run_{run_id}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # Step 0: ingest — just needs non-empty text output
-    # Steps 1-3: need valid JSON with specific keys
+    # All 3 steps produce JSON with specific required keys
     json_validations = [
-        (1, "parse",     "sections"),
-        (2, "transform", "docx_instructions"),
-        (3, "validate",  "overall_score"),
+        (0, "parse",     "sections"),
+        (1, "transform", "docx_instructions"),
+        (2, "validate",  "overall_score"),
     ]
 
-    for idx in range(4):
-        name = ["ingest", "parse", "transform", "validate"][idx]
+    for idx, name, required_key in json_validations:
         try:
             raw = _get_task_output(crew, idx)
             debug_path = run_dir / f"{idx+1}_{name}.txt"
@@ -754,28 +759,20 @@ def _validate_task_outputs(crew: Crew) -> str:
         except TransformError as e:
             raise TransformError(f"Pipeline task '{name}' (step {idx + 1}) produced no output: {e}")
 
-        if idx == 0:
-            # Ingest: just check non-empty
-            if not raw or not raw.strip():
-                raise TransformError(
-                    f"Pipeline task 'ingest' (step 1) produced empty output."
-                )
-        else:
-            # JSON steps: extract JSON properly (strips Thought: preamble)
-            _, _, required_key = next(v for v in json_validations if v[0] == idx)
-            try:
-                parsed = extract_json_from_llm(raw)
-            except LLMResponseError as e:
-                snippet = (raw[:200] + "...") if len(raw) > 200 else raw
-                raise TransformError(
-                    f"Pipeline task '{name}' (step {idx + 1}) failed JSON extraction: {e}. "
-                    f"Output snippet: {snippet!r}"
-                )
-            if required_key not in parsed:
-                raise TransformError(
-                    f"Pipeline task '{name}' (step {idx + 1}) missing required key "
-                    f"'{required_key}'. Keys found: {list(parsed.keys())}"
-                )
+        # JSON steps: extract JSON properly (strips Thought: preamble)
+        try:
+            parsed = extract_json_from_llm(raw)
+        except LLMResponseError as e:
+            snippet = (raw[:200] + "...") if len(raw) > 200 else raw
+            raise TransformError(
+                f"Pipeline task '{name}' (step {idx + 1}) failed JSON extraction: {e}. "
+                f"Output snippet: {snippet!r}"
+            )
+        if required_key not in parsed:
+            raise TransformError(
+                f"Pipeline task '{name}' (step {idx + 1}) missing required key "
+                f"'{required_key}'. Keys found: {list(parsed.keys())}"
+            )
 
         logger.debug("[PIPELINE] Task '%s' output validated OK (%d chars)", name, len(raw))
 
@@ -894,41 +891,22 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
     from agents.transform_agent import detect_style
     style_key = detect_style(journal_style)  # "apa" | "ieee" | "generic"
     is_apa = style_key == "apa"
-    logger.info("[PIPELINE] Initialising 4 agents — journal=%s style_key=%s", journal_style, style_key)
-    ingest_agent = create_ingest_agent(llm)
+    logger.info("[PIPELINE] Initialising 3 agents — journal=%s style_key=%s", journal_style, style_key)
     parse_agent = create_parse_agent(llm)
     transform_agent = create_transform_agent(llm, journal_style=journal_style)
     validate_agent = create_validate_agent(llm, journal_style=journal_style)
     logger.info("[PIPELINE] Agents ready")
 
-    ingest_task = Task(
-        description=(
-            f"Label the following paper with structural markers. Follow ALL rules exactly.\n\n"
-            f"<paper>\n{structured_paper}\n</paper>"
-        ),
-        expected_output=(
-            "The complete paper text with all structural labels inserted. "
-            "Must start with [CITATION_STYLE:...] and [SOURCE_FORMAT:...] lines. "
-            "Then the full paper text with [TITLE_START]...[TITLE_END], "
-            "[AUTHORS_START]...[AUTHORS_END], [ABSTRACT_START]...[ABSTRACT_END], "
-            "[HEADING_H1:text], [HEADING_H2:text], [CITATION:text], "
-            "[REFERENCE_START]...[REFERENCE_END] labels inserted."
-        ),
-        agent=ingest_agent,
-    )
-
     parse_task = Task(
         description=(
-            "Parse this labeled paper into structured JSON:\n\n"
-            "<labeled_paper>\n"
-            "The labeled paper text from the previous INGEST step.\n"
-            "</labeled_paper>\n\n"
-            "Extract ALL elements: metadata (citation_style, source_format, paper_type), "
-            "title, authors (with affiliations), abstract (text + word_count), keywords, "
-            "sections (with heading, level, content, subsections), figures, tables, "
-            "citations (with id, original_text, context), "
-            "references (with id, original_text, parsed components: authors, year, title, journal, volume, issue, pages, doi). "
-            "Return ONLY valid JSON — no markdown fences, no explanation."
+            f"Parse the following research paper directly into structured JSON.\n\n"
+            f"<paper>\n{structured_paper}\n</paper>\n\n"
+            f"Extract ALL elements: metadata (citation_style, source_format, paper_type), "
+            f"title, authors (with affiliations), abstract (text + word_count), keywords, "
+            f"sections (with heading, level, content, subsections), figures, tables, "
+            f"citations (with id, original_text, context), "
+            f"references (with id, original_text, parsed components: authors, year, title, journal, volume, issue, pages, doi). "
+            f"Return ONLY valid JSON — no markdown fences, no explanation."
         ),
         expected_output=(
             "Valid JSON object with keys: metadata, title, authors, affiliations, abstract, "
@@ -936,7 +914,6 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
             "Each reference must be parsed into component parts (authors, year, title, journal, etc.)."
         ),
         agent=parse_agent,
-        context=[ingest_task],
     )
 
     # ── Section stats summary for inject into transform task ──────────────────
@@ -1221,8 +1198,8 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
     step_timer = _StepTimer(progress_callback=progress_callback)
 
     crew = Crew(
-        agents=[ingest_agent, parse_agent, transform_agent, validate_agent],
-        tasks=[ingest_task, parse_task, transform_task, validate_task],
+        agents=[parse_agent, transform_agent, validate_agent],
+        tasks=[parse_task, transform_task, validate_task],
         process=Process.sequential,
         verbose=True,
         task_callback=step_timer.on_task_complete,
@@ -1236,6 +1213,7 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
         try:
             logger.info("[PIPELINE] Kicking off CrewAI (Attempt %d/%d)...",
                         attempt + 1, max_retries + 1)
+            logger.info("[PIPELINE] >>> Starting step 1/3 — %s...", _STEP_NAMES[0])
             result = crew.kickoff()
             raw_output = str(result)
 
@@ -1244,7 +1222,7 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
             run_id = _validate_task_outputs(crew)
             
             # Additional validation for transform output specifically
-            transform_raw = _get_task_output(crew, task_index=2)
+            transform_raw = _get_task_output(crew, task_index=1)
             transform_data = extract_json_from_llm(transform_raw)
             if "docx_instructions" in transform_data:
                 _normalize_docx_instructions(transform_data["docx_instructions"])
@@ -1264,8 +1242,8 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
                 raise
 
     logger.info("[PIPELINE] All steps complete — parsing outputs...")
-    parse_raw = _get_task_output(crew, task_index=1)
-    transform_raw = _get_task_output(crew, task_index=2)
+    parse_raw = _get_task_output(crew, task_index=0)
+    transform_raw = _get_task_output(crew, task_index=1)
     transform_data = extract_json_from_llm(transform_raw)
 
     compliance_report = _parse_compliance_report(raw_output)
@@ -1414,9 +1392,9 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
     # ── Extract parsed structure for the Live Document Editor  ───────────────
     document_structure = {}
     try:
-        parse_raw = _get_task_output(crew, task_index=1)
+        parse_raw = _get_task_output(crew, task_index=0)
         document_structure = extract_json_from_llm(parse_raw)
-        logger.info("[PIPELINE] Extracted parsed document structure from Agent 2")
+        logger.info("[PIPELINE] Extracted parsed document structure from PARSE agent")
     except Exception as e:
         logger.warning("[PIPELINE] Could not extract parsed document structure: %s", e)
 

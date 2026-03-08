@@ -117,14 +117,14 @@ def _run_pipeline_job(
             job["step_elapsed"] = step_elapsed
             job["total_elapsed"] = total_elapsed
             logger.info(
-                "[JOB:%s] Agent %d/4 (%s) done — %.1fs (total: %.1fs, progress: %d%%)",
+                "[JOB:%s] Agent %d/3 (%s) done — %.1fs (total: %.1fs, progress: %d%%)",
                 job_id, step_index, step_name, step_elapsed, total_elapsed, progress,
             )
 
     try:
         JOB_STORE[job_id]["progress"] = 5
         JOB_STORE[job_id]["step_index"] = 0
-        JOB_STORE[job_id]["step_name"] = "INGEST"
+        JOB_STORE[job_id]["step_name"] = "PARSE"
 
         # Use central RuleEngine to prepare final ruleset
         from engine.rule_engine import generate_rules
@@ -1027,10 +1027,9 @@ async def get_format_status(job_id: str) -> JSONResponse:
 
     # Agent step names matching frontend ProgressScreen STEPS array
     _STEP_LABELS = [
-        "Extracting structure...",
+        "Parsing & extracting structure...",
         "Applying format rules...",
-        "Validating citations...",
-        "Generating document...",
+        "Validating & generating document...",
     ]
 
     # Use real step data from JOB_STORE (set by progress_callback)
