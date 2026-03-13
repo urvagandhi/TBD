@@ -122,23 +122,10 @@ function DownloadDropdown({ onDownload, downloading, dlType }) {
 
   return (
     <div className="rs-dl-dropdown" ref={ref}>
-      <button className="rs-dl-btn rs-dl-docx" onClick={() => setOpen(!open)} disabled={downloading}>
+      <button className="rs-dl-btn rs-dl-docx" onClick={() => onDownload('doc')} disabled={downloading}>
         <IconDownload />
-        {downloading ? `Downloading ${dlType === 'pdf' ? 'PDF' : 'DOCX'}...` : 'Download'}
-        <svg width="10" height="10" viewBox="0 0 10 10" style={{ marginLeft: 4 }}>
-          <path d="M2 4l3 3 3-3" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" />
-        </svg>
+        {downloading ? 'Downloading DOCX...' : 'Download DOCX'}
       </button>
-      {open && (
-        <div className="rs-dl-menu">
-          <button className="rs-dl-menu-item" onClick={() => handlePick('doc')}>
-            <IconDownload /> Download DOCX
-          </button>
-          <button className="rs-dl-menu-item" onClick={() => handlePick('pdf')}>
-            <IconDownload /> Download PDF
-          </button>
-        </div>
-      )}
     </div>
   )
 }
