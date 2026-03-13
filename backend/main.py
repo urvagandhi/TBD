@@ -36,6 +36,7 @@ from tools.pre_format_scorer import score_pre_format
 from tools.rule_loader import JOURNAL_MAP, get_supported_journals, load_rules
 from tools.tool_errors import (
     DocumentWriteError,
+    ExtractionError,
     LLMResponseError,
     ParseError,
     RuleLoadError,
@@ -278,10 +279,11 @@ async def startup_event() -> None:
     logger.info("Supported journals: %s", get_supported_journals())
     logger.info("Upload dir:  %s", UPLOADS_DIR.resolve())
     logger.info("Output dir:  %s", OUTPUTS_DIR.resolve())
-    if not os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
-        logger.error("GEMINI_API_KEY not set in environment! LLM calls will fail.")
+    from tools.api_keys import key_count, has_fallback, startup_summary
+    if key_count() == 0:
+        logger.error("No Gemini API keys configured! LLM calls will fail.")
     else:
-        logger.info("GEMINI_API_KEY: set ✓")
+        logger.info("API Keys: %s", startup_summary())
     _cleanup_old_outputs(hours=6)
     logger.info("=" * 50)
 
@@ -694,6 +696,17 @@ async def upload_document(
         if upload_path.exists():
             upload_path.unlink(missing_ok=True)
         raise
+
+    except ExtractionError as e:
+        # Scanned/image-only PDFs, empty files, etc. — user-fixable
+        if upload_path.exists():
+            upload_path.unlink(missing_ok=True)
+        logger.warning("[UPLOAD:%s] Extraction failed: %s", doc_id, e)
+        raise HTTPException(status_code=422, detail={
+            "success": False,
+            "error": str(e),
+            "step": "extraction",
+        })
 
     except Exception as e:
         if upload_path.exists():
@@ -1807,8 +1820,10 @@ async def extract_rules_from_guidelines(
         # Call Gemini to extract rules
         import google.generativeai as genai
 
-        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        if not api_key:
+        from tools.api_keys import get_next_key, get_fallback_key
+        try:
+            api_key = get_next_key()
+        except RuntimeError:
             raise HTTPException(status_code=500, detail={
                 "success": False, "error": "LLM API key not configured.",
             })
@@ -1822,15 +1837,32 @@ async def extract_rules_from_guidelines(
         if len(guideline_text) > max_chars:
             truncated += "\n\n[... document truncated for processing ...]"
 
-        response = model.generate_content(
-            _RULES_EXTRACTION_PROMPT + truncated,
-            generation_config=genai.types.GenerationConfig(
-                temperature=0,
-                max_output_tokens=8192,
-            ),
-        )
-
-        raw_text = response.text.strip()
+        try:
+            response = model.generate_content(
+                _RULES_EXTRACTION_PROMPT + truncated,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0,
+                    max_output_tokens=8192,
+                ),
+            )
+            raw_text = response.text.strip()
+        except Exception as llm_err:
+            err_str = str(llm_err).lower()
+            fb = get_fallback_key()
+            if fb and any(kw in err_str for kw in ("429", "rate", "quota", "resource_exhausted", "503")):
+                logger.warning("[EXTRACT-RULES:%s] RR key rate-limited, retrying with fallback key", request_id)
+                genai.configure(api_key=fb)
+                model = genai.GenerativeModel(os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"))
+                response = model.generate_content(
+                    _RULES_EXTRACTION_PROMPT + truncated,
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=0,
+                        max_output_tokens=8192,
+                    ),
+                )
+                raw_text = response.text.strip()
+            else:
+                raise
 
         # Extract JSON from response (handle markdown fences)
         json_text = raw_text

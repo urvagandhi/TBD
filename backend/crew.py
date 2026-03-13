@@ -831,8 +831,12 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
     )
     pipeline_start = time.time()
 
-    # LiteLLM (used internally by CrewAI) reads GOOGLE_API_KEY for Google AI Studio
-    os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
+    # Round-robin: pick next API key for this pipeline run
+    from tools.api_keys import get_next_key, get_fallback_key
+    rr_key = get_next_key()
+    os.environ["GOOGLE_API_KEY"] = rr_key
+    os.environ["GEMINI_API_KEY"] = rr_key
+    _active_key_label = f"RR key ...{rr_key[-6:]}"
 
     model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     llm_timeout = int(os.getenv("LLM_TIMEOUT", "300"))
@@ -1256,8 +1260,8 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
 
     for attempt in range(max_retries + 1):
         try:
-            logger.info("[PIPELINE] Kicking off CrewAI (Attempt %d/%d)...",
-                        attempt + 1, max_retries + 1)
+            logger.info("[PIPELINE] Kicking off CrewAI (Attempt %d/%d, %s)...",
+                        attempt + 1, max_retries + 1, _active_key_label)
             logger.info("[PIPELINE] >>> Starting step 1/3 — %s...", _STEP_NAMES[0])
             result = crew.kickoff()
             raw_output = str(result)
@@ -1265,7 +1269,7 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
             # Validate all task outputs before proceeding
             logger.info("[PIPELINE] Validating task outputs...")
             run_id = _validate_task_outputs(crew)
-            
+
             # Additional validation for transform output specifically
             transform_raw = _get_task_output(crew, task_index=1)
             transform_data = extract_json_from_llm(transform_raw)
@@ -1278,8 +1282,16 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
         except (TransformError, LLMResponseError, ValidationError) as e:
             last_error = e
             if attempt < max_retries:
+                # On rate-limit or API errors, try fallback key before retrying
+                err_str = str(e).lower()
+                if any(kw in err_str for kw in ("429", "rate", "quota", "resource_exhausted", "503", "500")):
+                    fb = get_fallback_key()
+                    if fb and _active_key_label.startswith("RR"):
+                        logger.warning("[PIPELINE] Rate limit hit with %s — switching to fallback key", _active_key_label)
+                        os.environ["GOOGLE_API_KEY"] = fb
+                        os.environ["GEMINI_API_KEY"] = fb
+                        _active_key_label = f"Fallback ...{fb[-6:]}"
                 logger.warning("[PIPELINE] Attempt %d failed: %s. Retrying...", attempt + 1, e)
-                # Small delay before retry
                 time.sleep(2)
                 continue
             else:

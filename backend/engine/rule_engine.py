@@ -449,8 +449,10 @@ def extract_rules_llm(guidelines_text: str, max_retries: int = 3) -> dict:
     """
     import google.generativeai as genai
 
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    if not api_key:
+    from tools.api_keys import get_next_key
+    try:
+        api_key = get_next_key()
+    except RuntimeError:
         raise RuleLoadError(
             "GEMINI_API_KEY not set — cannot extract rules from guideline PDF."
         )
@@ -544,8 +546,10 @@ def convert_prompt_to_overrides(prompt: str, max_retries: int = 2) -> dict:
     """
     import google.generativeai as genai
     
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    if not api_key:
+    from tools.api_keys import get_next_key
+    try:
+        api_key = get_next_key()
+    except RuntimeError:
         logger.warning("[RULE] LLM API key not set — skipping prompt-to-JSON conversion")
         return {}
 
