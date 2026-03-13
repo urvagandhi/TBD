@@ -508,8 +508,8 @@ Return ONLY this JSON (no markdown, no backticks):
       {"type": "paragraph", "content": "..."},
       {"type": "heading", "content": "A. Subsection", "level": 2},
       {"type": "paragraph", "content": "..."},
-      {"type": "figure_caption", "content": "Fig. 1. Description"},
-      {"type": "table_caption", "content": "TABLE I. Description"},
+      {"type": "figure_caption", "number": 1, "caption": "Description of the figure"},
+      {"type": "table_caption", "number": 1, "caption": "Description of the table"},
       {"type": "reference", "content": "[1] A. B. Author..."}
     ]
   }

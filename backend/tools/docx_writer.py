@@ -32,6 +32,34 @@ logger = get_logger(__name__)
 _CASE_OPTIONS = {"Title Case", "UPPERCASE", "Sentence case", "lowercase"}
 
 
+_FIG_NUM_RE = re.compile(r'(?:Fig\.?|Figure)\s*(\d+)\.?\s*', re.IGNORECASE)
+_TBL_NUM_RE = re.compile(r'(?:TABLE|Table)\s*([IVXLCDM]+|\d+)\.?\s*', re.IGNORECASE)
+
+
+def _extract_figure_number(section: dict) -> tuple:
+    """Extract (number, caption) from a figure section, parsing content if needed."""
+    number = section.get("number", "")
+    caption = section.get("caption", section.get("content", ""))
+    if not number and caption:
+        m = _FIG_NUM_RE.match(caption)
+        if m:
+            number = m.group(1)
+            caption = caption[m.end():].strip()
+    return number, caption
+
+
+def _extract_table_number(section: dict) -> tuple:
+    """Extract (number, caption) from a table section, parsing content if needed."""
+    number = section.get("number", "")
+    caption = section.get("caption", section.get("content", ""))
+    if not number and caption:
+        m = _TBL_NUM_RE.match(caption)
+        if m:
+            number = m.group(1)
+            caption = caption[m.end():].strip()
+    return number, caption
+
+
 def _media_lookup(store: Optional[dict], key) -> Optional[dict]:
     """Look up media by key, trying both original type and int conversion."""
     if not store or key == "" or key is None:
@@ -738,7 +766,7 @@ def _render_figure_image(
     font_name: str, font_size: int,
 ) -> None:
     """Insert actual image above caption (shared by IEEE/generic writers)."""
-    fig_num = section.get("number", "")
+    fig_num, _ = _extract_figure_number(section)
     image_data = _media_lookup(image_store, fig_num)
     if not image_data or not image_data.get("bytes"):
         return
@@ -770,7 +798,7 @@ def _render_table_data(
     font_name: str, font_size: int,
 ) -> None:
     """Insert actual table data below caption (shared by IEEE/generic writers)."""
-    tbl_num = section.get("number", "")
+    tbl_num, _ = _extract_table_number(section)
     table_data = _media_lookup(table_store, tbl_num)
 
     rows = None
@@ -821,8 +849,7 @@ def _add_ieee_figure_caption(
     caption_italic = fig_rules.get("caption_italic", False)
     caption_align = fig_rules.get("caption_alignment", "center")
 
-    number = section.get("number", "")
-    caption = section.get("caption", section.get("content", ""))
+    number, caption = _extract_figure_number(section)
     label_text = f"{label_prefix} {number}." if number else f"{label_prefix}"
 
     para = doc.add_paragraph()
@@ -865,8 +892,7 @@ def _add_ieee_table_caption(
     caption_align = tbl_rules.get("caption_alignment", "center")
     numbering = tbl_rules.get("numbering", "roman")
 
-    number = section.get("number", "")
-    caption = section.get("caption", section.get("content", ""))
+    number, caption = _extract_table_number(section)
 
     # Convert to roman numeral if needed
     if numbering == "roman" and number:
@@ -1026,8 +1052,7 @@ def build_springer_docx(instructions: dict, output_path: str, image_store: Optio
             elif section_type in ("figure_caption", "figure_block"):
                 _render_figure_image(doc, section, image_store, font_name, font_size)
                 # Springer: "Fig. N" bold, caption below
-                number = section.get("number", "")
-                caption = section.get("caption", section.get("content", ""))
+                number, caption = _extract_figure_number(section)
                 para = doc.add_paragraph()
                 para.alignment = WD_ALIGN_PARAGRAPH.LEFT
                 _apply_line_spacing(para.paragraph_format, line_spacing)
@@ -1039,8 +1064,7 @@ def build_springer_docx(instructions: dict, output_path: str, image_store: Optio
 
             elif section_type in ("table_caption", "table_block"):
                 # Springer: "Table N" bold, caption above
-                number = section.get("number", "")
-                caption = section.get("caption", section.get("content", ""))
+                number, caption = _extract_table_number(section)
                 para = doc.add_paragraph()
                 para.alignment = WD_ALIGN_PARAGRAPH.LEFT
                 _apply_line_spacing(para.paragraph_format, line_spacing)
@@ -1230,8 +1254,7 @@ def build_chicago_docx(instructions: dict, output_path: str, image_store: Option
             elif section_type in ("figure_caption", "figure_block"):
                 _render_figure_image(doc, section, image_store, font_name, font_size)
                 # Chicago: "Figure N. Caption" below, left-aligned
-                number = section.get("number", "")
-                caption = section.get("caption", section.get("content", ""))
+                number, caption = _extract_figure_number(section)
                 para = doc.add_paragraph()
                 para.alignment = WD_ALIGN_PARAGRAPH.LEFT
                 _apply_line_spacing(para.paragraph_format, line_spacing)
@@ -1244,8 +1267,7 @@ def build_chicago_docx(instructions: dict, output_path: str, image_store: Option
 
             elif section_type in ("table_caption", "table_block"):
                 # Chicago: "Table N" + caption above, minimal borders
-                number = section.get("number", "")
-                caption = section.get("caption", section.get("content", ""))
+                number, caption = _extract_table_number(section)
                 para = doc.add_paragraph()
                 para.alignment = WD_ALIGN_PARAGRAPH.LEFT
                 _apply_line_spacing(para.paragraph_format, line_spacing)
@@ -1441,8 +1463,7 @@ def build_vancouver_docx(instructions: dict, output_path: str, image_store: Opti
             elif section_type in ("figure_caption", "figure_block"):
                 _render_figure_image(doc, section, image_store, font_name, font_size)
                 # Vancouver: "Figure N. Caption" below figure
-                number = section.get("number", "")
-                caption = section.get("caption", section.get("content", ""))
+                number, caption = _extract_figure_number(section)
                 para = doc.add_paragraph()
                 para.alignment = WD_ALIGN_PARAGRAPH.LEFT
                 _apply_line_spacing(para.paragraph_format, line_spacing)
@@ -1455,8 +1476,7 @@ def build_vancouver_docx(instructions: dict, output_path: str, image_store: Opti
 
             elif section_type in ("table_caption", "table_block"):
                 # Vancouver: "Table N. Caption" above table
-                number = section.get("number", "")
-                caption = section.get("caption", section.get("content", ""))
+                number, caption = _extract_table_number(section)
                 para = doc.add_paragraph()
                 para.alignment = WD_ALIGN_PARAGRAPH.LEFT
                 _apply_line_spacing(para.paragraph_format, line_spacing)
@@ -1720,8 +1740,7 @@ def write_formatted_docx(instructions: dict, output_path: str, image_store: Opti
                 label_bold = fig_rules.get("label_bold", True)
                 caption_italic = fig_rules.get("caption_italic", False)
                 cap_align = fig_rules.get("caption_alignment", "center")
-                number = section.get("number", "")
-                caption = section.get("caption", section.get("content", ""))
+                number, caption = _extract_figure_number(section)
                 label_text = f"{label_prefix} {number}. " if number else f"{label_prefix} "
 
                 _render_figure_image(doc, section, image_store, font_name, font_size)
@@ -1740,8 +1759,7 @@ def write_formatted_docx(instructions: dict, output_path: str, image_store: Opti
                 label_bold = tbl_rules.get("label_bold", True)
                 caption_italic = tbl_rules.get("caption_italic", False)
                 cap_align = tbl_rules.get("caption_alignment", "center")
-                number = section.get("number", "")
-                caption = section.get("caption", section.get("content", ""))
+                number, caption = _extract_table_number(section)
                 label_text = f"{label_prefix} {number}. " if number else f"{label_prefix} "
 
                 para = doc.add_paragraph()

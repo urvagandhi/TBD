@@ -962,7 +962,8 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
             f"5. sections array MUST contain (in order):\n"
             f"   - title_page: spacing(3 blank lines), title(bold,centered), spacing(1), authors, affiliation\n"
             f"   - abstract_page: abstract_label(bold,centered), abstract_body(no indent), keywords(items=[...], label_italic=true)\n"
-            f"   - body: title_repeat(bold,centered), body_paragraphs(0.5\" indent), headings H1/H2/H3, figure/table captions\n"
+            f"   - body: title_repeat(bold,centered), body_paragraphs(0.5\" indent), headings H1/H2/H3,\n"
+            f"     figure_caption (with number, label, caption fields), table_caption (with number, label, caption fields)\n"
             f"   - references_page: references_label(bold,centered), reference_entry(hanging_indent=true)\n"
             f"6. ALL citation replacements must be applied INLINE in body text\n"
             f"7. Include format_applied='APA 7th Edition' in top-level output\n\n"
@@ -972,6 +973,36 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
             "reference_conversions, reference_order, docx_instructions "
             "(with format_id='apa7', font_size_halfpoints=24, line_spacing_twips=480, "
             "body_first_line_indent_dxa=720, sections: [title_page, abstract_page, body, references_page])."
+        )
+    elif style_key == "ieee":
+        _cit_rules = rules.get("citations", {})
+        _ref_rules = rules.get("references", {})
+        _doc_rules = rules.get("document", {})
+        _transform_specifics = (
+            f"CRITICAL REQUIREMENTS FOR IEEE:\n"
+            f"1. Citation format: numbered [N] in square brackets, ordered by appearance.\n"
+            f"   If source uses author-date, CONVERT to numbered [N] format.\n"
+            f"2. Reference ordering: by order of appearance (NOT alphabetical).\n"
+            f"3. Reference style: [N] A. B. Author, \"Title,\" *Journal*, vol. X, no. Y, pp. Z1–Z2, Year.\n"
+            f"4. Document: font={_doc_rules.get('font', 'Times New Roman')}, "
+            f"size={_doc_rules.get('font_size', 10)}pt, "
+            f"spacing={_doc_rules.get('line_spacing', 1.0)}, "
+            f"alignment={_doc_rules.get('alignment', 'justify')}, 2-column layout\n"
+            f"5. Headings: H1 UPPERCASE centered (Roman numerals), H2 Bold left (letter), H3 italic indented.\n"
+            f"6. Generate docx_instructions with a FLAT sections array containing:\n"
+            f"   types: title, author_blocks, abstract, keywords, heading, paragraph, "
+            f"reference, figure_caption, table_caption\n"
+            f"   IMPORTANT: For figure_caption and table_caption, include 'number' (integer) and 'caption' fields.\n"
+            f"   Example: {{\"type\": \"figure_caption\", \"number\": 1, \"caption\": \"Description\"}}\n"
+            f"   Example: {{\"type\": \"table_caption\", \"number\": 1, \"caption\": \"Description\"}}\n"
+            f"7. ALL citation/reference changes must be applied INLINE in body text.\n"
+            f"8. Use *asterisks* for italic markers (journal names, book titles).\n\n"
+        )
+        _transform_expected = (
+            "Valid JSON with: format_applied, violations, changes_made, citation_replacements, "
+            "reference_conversions, reference_order, docx_instructions "
+            "(with flat sections array: [title, author_blocks, abstract, keywords, heading, paragraph, "
+            "figure_caption, table_caption, reference...])."
         )
     elif style_key == "springer":
         _cit_rules = rules.get("citations", {})
@@ -993,7 +1024,9 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
             f"7. Generate docx_instructions with a FLAT sections array containing:\n"
             f"   types: title, authors, affiliations, abstract, keywords, heading, "
             f"paragraph, reference, figure_caption, table_caption\n"
-            f"   Each section has: type, content, and relevant formatting flags\n"
+            f"   Each section has: type, content, and relevant formatting flags.\n"
+            f"   IMPORTANT: For figure_caption and table_caption, include 'number' (integer) and 'caption' fields.\n"
+            f"   Example: {{\"type\": \"figure_caption\", \"number\": 1, \"caption\": \"Description\"}}\n"
             f"8. ALL citation/reference changes must be applied INLINE in body text. "
             f"ZERO numbered citations should remain.\n\n"
         )
@@ -1015,7 +1048,9 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
             f"7. Generate docx_instructions with a FLAT sections array containing:\n"
             f"   types: title, authors, affiliations, abstract, keywords, heading, "
             f"paragraph, reference, figure_caption, table_caption\n"
-            f"   Each section has: type, content, and relevant formatting flags\n"
+            f"   Each section has: type, content, and relevant formatting flags.\n"
+            f"   IMPORTANT: For figure_caption and table_caption, include 'number' (integer) and 'caption' fields.\n"
+            f"   Example: {{\"type\": \"figure_caption\", \"number\": 1, \"caption\": \"Description\"}}\n"
             f"8. ALL citation/reference changes must be applied INLINE in body text. "
             f"ZERO numbered citations should remain.\n\n"
         )
@@ -1037,7 +1072,9 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
             f"7. Generate docx_instructions with a FLAT sections array containing:\n"
             f"   types: title, authors, affiliations, abstract, keywords, heading, "
             f"paragraph, reference, figure_caption, table_caption\n"
-            f"   Each section has: type, content, and relevant formatting flags\n"
+            f"   Each section has: type, content, and relevant formatting flags.\n"
+            f"   IMPORTANT: For figure_caption and table_caption, include 'number' (integer) and 'caption' fields.\n"
+            f"   Example: {{\"type\": \"figure_caption\", \"number\": 1, \"caption\": \"Description\"}}\n"
             f"8. ALL citation/reference changes must be applied INLINE in body text. "
             f"Author formatting must be Surname Initials.\n\n"
         )
@@ -1064,7 +1101,9 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
             f"6. Generate docx_instructions with a FLAT sections array containing:\n"
             f"   types: title, abstract, heading (with level), paragraph, reference, "
             f"figure_caption, table_caption\n"
-            f"   Each section has: type, content, and relevant formatting flags\n"
+            f"   Each section has: type, content, and relevant formatting flags.\n"
+            f"   IMPORTANT: For figure_caption and table_caption, include 'number' (integer) and 'caption' fields.\n"
+            f"   Example: {{\"type\": \"figure_caption\", \"number\": 1, \"caption\": \"Description\"}}\n"
             f"7. ALL citation/reference changes must be applied INLINE in body text\n\n"
         )
         _transform_expected = (
