@@ -546,32 +546,52 @@ export default function App() {
   // ── Server wake-up (Render free tier cold-start) ─────────────
   // 'idle' = not checked, 'waking' = pinging, 'awake' = ready, 'unreachable' = failed
   const [serverStatus, setServerStatus] = useState('idle')
+  const [wakeElapsed, setWakeElapsed] = useState(0)
   const wakeAttempts = useRef(0)
+  const wakeTimerRef = useRef(null)
 
   const wakeServer = async () => {
     setServerStatus('waking')
+    setWakeElapsed(0)
     wakeAttempts.current = 0
-    const maxRetries = 40 // ~2 minutes total (cold start can take up to 2 min)
+
+    // Elapsed timer — ticks every second for live countdown
+    if (wakeTimerRef.current) clearInterval(wakeTimerRef.current)
+    const startTime = Date.now()
+    wakeTimerRef.current = setInterval(() => {
+      setWakeElapsed(Math.floor((Date.now() - startTime) / 1000))
+    }, 1000)
+
+    const maxRetries = 40 // ~2 minutes
     const ping = async () => {
       try {
         await axios.get(`${API}/health`, { timeout: 5000 })
-        setServerStatus('awake')
         return true
       } catch {
         return false
       }
     }
     // First try immediately
-    if (await ping()) return
+    if (await ping()) {
+      clearInterval(wakeTimerRef.current)
+      setServerStatus('awake')
+      // Auto-dismiss after 3 seconds
+      setTimeout(() => setServerStatus('ready'), 3000)
+      return
+    }
     // Retry loop
     return new Promise((resolve) => {
       const iv = setInterval(async () => {
         wakeAttempts.current += 1
         if (await ping()) {
           clearInterval(iv)
+          clearInterval(wakeTimerRef.current)
+          setServerStatus('awake')
+          setTimeout(() => setServerStatus('ready'), 3000)
           resolve()
         } else if (wakeAttempts.current >= maxRetries) {
           clearInterval(iv)
+          clearInterval(wakeTimerRef.current)
           setServerStatus('unreachable')
           resolve()
         }
@@ -584,6 +604,7 @@ export default function App() {
     if (view === 'tool' && serverStatus === 'idle') {
       wakeServer()
     }
+    return () => { if (wakeTimerRef.current) clearInterval(wakeTimerRef.current) }
   }, [view])
 
   // ── File upload → POST /upload ──────────────────────────────
@@ -865,25 +886,59 @@ export default function App() {
                 <div style={{
                   background: 'rgba(251,191,36,0.10)', border: '1.5px solid #f59e0b',
                   borderRadius: 'var(--radius)', padding: '12px 16px', marginBottom: 12,
-                  fontSize: '0.85rem', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 10,
+                  fontSize: '0.85rem', color: '#f59e0b',
                 }}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0, animation: 'spin 1s linear infinite' }}>
-                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" strokeDasharray="50" strokeLinecap="round" />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0, animation: 'spin 1s linear infinite' }}>
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" strokeDasharray="50" strokeLinecap="round" />
+                    </svg>
+                    <span>
+                      {wakeElapsed < 10
+                        ? 'Connecting to server...'
+                        : wakeElapsed < 30
+                        ? 'Server is waking up from sleep...'
+                        : wakeElapsed < 60
+                        ? 'Still warming up — cold starts can take a moment...'
+                        : 'Almost there — server is loading dependencies...'}
+                    </span>
+                    <span style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums', opacity: 0.7 }}>
+                      {wakeElapsed}s
+                    </span>
+                  </div>
+                  {wakeElapsed >= 15 && (
+                    <div style={{ marginTop: 6, fontSize: '0.78rem', opacity: 0.7 }}>
+                      Free-tier servers sleep after 15 min of inactivity. This is a one-time wait.
+                    </div>
+                  )}
+                </div>
+              )}
+              {serverStatus === 'awake' && (
+                <div style={{
+                  background: 'rgba(34,197,94,0.10)', border: '1.5px solid #22c55e',
+                  borderRadius: 'var(--radius)', padding: '12px 16px', marginBottom: 12,
+                  fontSize: '0.85rem', color: '#22c55e', display: 'flex', alignItems: 'center', gap: 10,
+                  animation: 'fadeIn 0.3s ease',
+                }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" />
+                    <path d="M8 12l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
-                  Waking up the server... This may take 1–2 minutes on first visit. Hang tight!
+                  Server is ready! You can upload your document now.
                 </div>
               )}
               {serverStatus === 'unreachable' && (
                 <div style={{
                   background: 'rgba(239,68,68,0.08)', border: '1.5px solid var(--error)',
                   borderRadius: 'var(--radius)', padding: '12px 16px', marginBottom: 12,
-                  fontSize: '0.85rem', color: 'var(--error)', display: 'flex', alignItems: 'center', gap: 10,
+                  fontSize: '0.85rem', color: 'var(--error)',
                 }}>
-                  Server is still starting up or a new version is deploying (can take 5–7 min). Please retry shortly.
-                  <button onClick={() => wakeServer()} style={{
-                    marginLeft: 'auto', background: 'none', border: '1px solid var(--error)',
-                    color: 'var(--error)', borderRadius: 6, padding: '4px 12px', cursor: 'pointer', fontSize: '0.8rem',
-                  }}>Retry</button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    Server is still starting up or a new version is deploying (can take 5–7 min).
+                    <button onClick={() => wakeServer()} style={{
+                      marginLeft: 'auto', background: 'none', border: '1px solid var(--error)',
+                      color: 'var(--error)', borderRadius: 6, padding: '4px 12px', cursor: 'pointer', fontSize: '0.8rem',
+                    }}>Retry</button>
+                  </div>
                 </div>
               )}
 

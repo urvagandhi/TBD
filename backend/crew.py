@@ -831,28 +831,40 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
     )
     pipeline_start = time.time()
 
-    # Round-robin: pick next API key for this pipeline run
+    # Round-robin: each agent gets its own API key to distribute load
     from tools.api_keys import get_next_key, get_fallback_key
-    rr_key = get_next_key()
-    os.environ["GOOGLE_API_KEY"] = rr_key
-    os.environ["GEMINI_API_KEY"] = rr_key
-    _active_key_label = f"RR key ...{rr_key[-6:]}"
 
     model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     llm_timeout = int(os.getenv("LLM_TIMEOUT", "300"))
-
-    # Gemini 2.5 Flash "thinking" tokens share the max_tokens budget.
-    # Without a cap, thinking can consume the entire budget → empty response.
-    # Budget split: ~16k thinking + ~49k output = 65536 total.
     max_tokens = int(os.getenv("GEMINI_MAX_TOKENS", "65536"))
     thinking_budget = int(os.getenv("GEMINI_THINKING_BUDGET", "16384"))
-    llm = LLM(
-        model=f"gemini/{model_name}",
-        timeout=llm_timeout,
-        temperature=0,
-        max_tokens=max_tokens,
-        thinking={"type": "enabled", "budget_tokens": thinking_budget},
-    )
+
+    fb_key = get_fallback_key()
+
+    def _make_llm(label: str) -> LLM:
+        """Create an LLM instance with the next round-robin API key + fallback."""
+        key = get_next_key()
+        # Set env vars so LiteLLM/CrewAI can also pick them up
+        os.environ["GOOGLE_API_KEY"] = key
+        os.environ["GEMINI_API_KEY"] = key
+        logger.info("[PIPELINE] %s → primary key ...%s%s",
+                    label, key[-6:],
+                    f", fallback ...{fb_key[-6:]}" if fb_key else "")
+        llm_obj = LLM(
+            model=f"gemini/{model_name}",
+            api_key=key,
+            timeout=llm_timeout,
+            temperature=0,
+            max_tokens=max_tokens,
+            thinking={"type": "enabled", "budget_tokens": thinking_budget},
+        )
+        return llm_obj
+
+    llm_parse = _make_llm("PARSE agent")
+    llm_transform = _make_llm("TRANSFORM agent")
+    llm_validate = _make_llm("VALIDATE agent")
+    _active_key_label = "RR keys (per-agent)"
+
     logger.info(
         "[PIPELINE] LLM = %s (max_tokens=%d, thinking_budget=%d)",
         model_name, max_tokens, thinking_budget,
@@ -902,9 +914,9 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
     style_key = detect_style(journal_style)  # "apa" | "ieee" | "generic"
     is_apa = style_key == "apa"
     logger.info("[PIPELINE] Initialising 3 agents — journal=%s style_key=%s", journal_style, style_key)
-    parse_agent = create_parse_agent(llm)
-    transform_agent = create_transform_agent(llm, journal_style=journal_style)
-    validate_agent = create_validate_agent(llm, journal_style=journal_style)
+    parse_agent = create_parse_agent(llm_parse)
+    transform_agent = create_transform_agent(llm_transform, journal_style=journal_style)
+    validate_agent = create_validate_agent(llm_validate, journal_style=journal_style)
     logger.info("[PIPELINE] Agents ready")
 
     parse_task = Task(
@@ -1285,12 +1297,29 @@ def run_pipeline(paper_content: str, journal_style: str, source_docx_path: Optio
                 # On rate-limit or API errors, try fallback key before retrying
                 err_str = str(e).lower()
                 if any(kw in err_str for kw in ("429", "rate", "quota", "resource_exhausted", "503", "500")):
-                    fb = get_fallback_key()
-                    if fb and _active_key_label.startswith("RR"):
-                        logger.warning("[PIPELINE] Rate limit hit with %s — switching to fallback key", _active_key_label)
-                        os.environ["GOOGLE_API_KEY"] = fb
-                        os.environ["GEMINI_API_KEY"] = fb
-                        _active_key_label = f"Fallback ...{fb[-6:]}"
+                    # On rate limit: rebuild all agents with fresh keys (round-robin rotates)
+                    # If RR keys are exhausted, fall back to dedicated fallback key
+                    if fb_key and not _active_key_label.startswith("Fallback"):
+                        retry_key = fb_key
+                        _active_key_label = f"Fallback ...{fb_key[-6:]}"
+                        logger.warning("[PIPELINE] Rate limit hit — switching all agents to fallback key ...%s", fb_key[-6:])
+                    else:
+                        retry_key = get_next_key()
+                        _active_key_label = f"RR key ...{retry_key[-6:]}"
+                        logger.warning("[PIPELINE] Rate limit hit — rotating to next RR key ...%s", retry_key[-6:])
+                    retry_llm = LLM(
+                        model=f"gemini/{model_name}",
+                        api_key=retry_key,
+                        timeout=llm_timeout,
+                        temperature=0,
+                        max_tokens=max_tokens,
+                        thinking={"type": "enabled", "budget_tokens": thinking_budget},
+                    )
+                    os.environ["GOOGLE_API_KEY"] = retry_key
+                    os.environ["GEMINI_API_KEY"] = retry_key
+                    parse_agent.llm = retry_llm
+                    transform_agent.llm = retry_llm
+                    validate_agent.llm = retry_llm
                 logger.warning("[PIPELINE] Attempt %d failed: %s. Retrying...", attempt + 1, e)
                 time.sleep(2)
                 continue
