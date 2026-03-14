@@ -543,6 +543,49 @@ export default function App() {
   const [downloading, setDownloading] = useState(false)
   const [dlType, setDlType] = useState('doc')
 
+  // ── Server wake-up (Render free tier cold-start) ─────────────
+  // 'idle' = not checked, 'waking' = pinging, 'awake' = ready, 'unreachable' = failed
+  const [serverStatus, setServerStatus] = useState('idle')
+  const wakeAttempts = useRef(0)
+
+  const wakeServer = async () => {
+    setServerStatus('waking')
+    wakeAttempts.current = 0
+    const maxRetries = 40 // ~2 minutes total (cold start can take up to 2 min)
+    const ping = async () => {
+      try {
+        await axios.get(`${API}/health`, { timeout: 5000 })
+        setServerStatus('awake')
+        return true
+      } catch {
+        return false
+      }
+    }
+    // First try immediately
+    if (await ping()) return
+    // Retry loop
+    return new Promise((resolve) => {
+      const iv = setInterval(async () => {
+        wakeAttempts.current += 1
+        if (await ping()) {
+          clearInterval(iv)
+          resolve()
+        } else if (wakeAttempts.current >= maxRetries) {
+          clearInterval(iv)
+          setServerStatus('unreachable')
+          resolve()
+        }
+      }, 3000)
+    })
+  }
+
+  // Wake server when user enters the tool view
+  useEffect(() => {
+    if (view === 'tool' && serverStatus === 'idle') {
+      wakeServer()
+    }
+  }, [view])
+
   // ── File upload → POST /upload ──────────────────────────────
   const handleFileSelect = async (f) => {
     setFile(f)
@@ -570,9 +613,41 @@ export default function App() {
         size_kb: data.size_kb,
       })
     } catch (err) {
-      const detail = err.response?.data?.detail
-      const msg = typeof detail === 'object' ? detail.error : detail || err.message
-      setError(msg || 'Upload failed.')
+      // Detect cold-start / network error (no response from server)
+      if (!err.response && (err.code === 'ERR_NETWORK' || err.message === 'Network Error')) {
+        setError('')
+        setServerStatus('waking')
+        await wakeServer()
+        if (serverStatus === 'awake' || wakeAttempts.current < 40) {
+          // Auto-retry upload once server is awake
+          try {
+            const formData2 = new FormData()
+            formData2.append('file', f)
+            const res2 = await axios.post(`${API}/upload`, formData2, {
+              headers: { 'Content-Type': 'multipart/form-data' },
+              timeout: 30000,
+            })
+            const data2 = res2.data
+            setDocId(data2.doc_id)
+            setUploadInfo({
+              filename: data2.filename,
+              word_count: data2.word_count,
+              char_count: data2.char_count,
+              file_type: data2.file_type,
+              size_kb: data2.size_kb,
+            })
+            setUploading(false)
+            return
+          } catch {
+            // Fall through to generic error
+          }
+        }
+        setError('Server is still starting up (cold start takes 1–2 min). Please wait and try again.')
+      } else {
+        const detail = err.response?.data?.detail
+        const msg = typeof detail === 'object' ? detail.error : detail || err.message
+        setError(msg || 'Upload failed.')
+      }
       setFile(null)
       setDocId(null)
       setUploadInfo(null)
@@ -784,6 +859,33 @@ export default function App() {
               <p>Upload your document, choose your target format, and let Gemini AI handle the rest.</p>
             </div>
             <div className="tool-card">
+
+              {/* Server wake-up banner (Render free tier cold start) */}
+              {serverStatus === 'waking' && (
+                <div style={{
+                  background: 'rgba(251,191,36,0.10)', border: '1.5px solid #f59e0b',
+                  borderRadius: 'var(--radius)', padding: '12px 16px', marginBottom: 12,
+                  fontSize: '0.85rem', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 10,
+                }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0, animation: 'spin 1s linear infinite' }}>
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" strokeDasharray="50" strokeLinecap="round" />
+                  </svg>
+                  Waking up the server... This may take 1–2 minutes on first visit. Hang tight!
+                </div>
+              )}
+              {serverStatus === 'unreachable' && (
+                <div style={{
+                  background: 'rgba(239,68,68,0.08)', border: '1.5px solid var(--error)',
+                  borderRadius: 'var(--radius)', padding: '12px 16px', marginBottom: 12,
+                  fontSize: '0.85rem', color: 'var(--error)', display: 'flex', alignItems: 'center', gap: 10,
+                }}>
+                  Server is still starting up or a new version is deploying (can take 5–7 min). Please retry shortly.
+                  <button onClick={() => wakeServer()} style={{
+                    marginLeft: 'auto', background: 'none', border: '1px solid var(--error)',
+                    color: 'var(--error)', borderRadius: 6, padding: '4px 12px', cursor: 'pointer', fontSize: '0.8rem',
+                  }}>Retry</button>
+                </div>
+              )}
 
               {/* Step 1: File Upload */}
               <Upload
