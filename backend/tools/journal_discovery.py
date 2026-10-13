@@ -13,6 +13,7 @@ import httpx
 from pathlib import Path
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+from urllib.parse import urljoin, urlparse
 
 from tools.logger import get_logger
 
@@ -63,7 +64,7 @@ def _write_cache(journal_name: str, rules: dict) -> Path:
 # Step 1: Search the web
 # ---------------------------------------------------------------------------
 
-def search_journal(query: str, max_results: int = 5) -> list[dict]:
+def search_journal(query: str, max_results: int = 5, focus: str = "") -> list[dict]:
     """
     Search DuckDuckGo for a journal's author guidelines page.
 
@@ -72,7 +73,7 @@ def search_journal(query: str, max_results: int = 5) -> list[dict]:
     try:
         from ddgs import DDGS
 
-        search_query = f"{query} author guidelines formatting"
+        search_query = f"{query} {focus} author guidelines formatting".strip()
         logger.info("[DISCOVERY] Searching: %s", search_query)
 
         results = list(DDGS().text(search_query, max_results=max_results))
@@ -94,6 +95,29 @@ def search_journal(query: str, max_results: int = 5) -> list[dict]:
     except Exception as e:
         logger.warning("[DISCOVERY] Search failed: %s", e)
         return []
+
+
+def extract_guideline_links(page_text: str, base_url: str, max_links: int = 8) -> list[dict]:
+    """Return relevant, same-site guideline links from fetched Markdown/text.
+
+    Discovery is intentionally bounded: it follows one link level and only
+    links whose visible text or URL looks related to manuscript requirements.
+    """
+    base_host = urlparse(base_url).netloc.lower().removeprefix("www.")
+    pattern = re.compile(r"\[([^\]]{2,160})\]\((https?://[^)\s]+|/[^)\s]+)\)")
+    relevant = re.compile(r"author|submit|manuscript|guideline|instruction|reference|citation|format|template|prepare", re.I)
+    links, seen = [], {base_url}
+    for label, raw_url in pattern.findall(page_text):
+        url = urljoin(base_url, raw_url)
+        parsed = urlparse(url)
+        host = parsed.netloc.lower().removeprefix("www.")
+        if host != base_host or url in seen or not relevant.search(f"{label} {url}"):
+            continue
+        seen.add(url)
+        links.append({"title": label.strip(), "url": url, "snippet": "Linked from the selected official guidance page."})
+        if len(links) >= max_links:
+            break
+    return links
 
 
 # ---------------------------------------------------------------------------

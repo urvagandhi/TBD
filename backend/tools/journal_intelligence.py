@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from tools.journal_discovery import extract_rules_from_text, fetch_journal_page, search_journal
+from tools.journal_discovery import extract_guideline_links, extract_rules_from_text, fetch_journal_page, search_journal
 from tools.logger import get_logger
 from tools.rule_instruction_compiler import compile_rule_instructions
 
@@ -28,13 +28,19 @@ _OFFICIAL_HINTS = (
     "nature.com", "springer.com", "elsevier.com", "wiley.com", "tandfonline.com",
     "sagepub.com", "oup.com", "academic.oup.com", "cambridge.org", "plos.org",
     "bmj.com", "nejm.org", "thelancet.com", "jamanetwork.com", "ieee.org",
-    "acm.org", "aps.org", "cell.com", "sciencedirect.com", "frontiersin.org",
+    "acm.org", "aps.org", "cell.com", "sciencedirect.com", "frontiersin.org", "peerj.com",
 )
 _CRITICAL_CATEGORIES = {
     "document": ("document",),
     "abstract": ("abstract",),
     "headings": ("headings",),
     "references": ("citations", "references"),
+}
+_FOLLOW_UP_TOPICS = {
+    "document": "manuscript preparation font margins layout",
+    "abstract": "abstract word limit keywords",
+    "headings": "manuscript section headings structure",
+    "references": "reference citation style bibliography",
 }
 _PATH_KEYWORDS = {
     "document.font": ("font", "typeface"),
@@ -68,23 +74,39 @@ def _source_score(source: dict[str, str], journal_name: str) -> tuple[int, list[
     url = source.get("url", "")
     parsed = urlparse(url)
     host = parsed.netloc.lower().removeprefix("www.")
-    text = f"{source.get('title', '')} {source.get('snippet', '')}".lower()
+    title = source.get("title", "").lower()
+    text = f"{title} {source.get('snippet', '')}".lower()
     score, reasons = 0, []
-    if any(host == hint or host.endswith(f".{hint}") for hint in _OFFICIAL_HINTS):
+    recognized_domain = any(host == hint or host.endswith(f".{hint}") for hint in _OFFICIAL_HINTS)
+    requested_in_title = journal_name.lower() in title
+    guidance_in_title = any(word in title for word in ("author", "submission", "instruction", "guideline", "manuscript"))
+    if recognized_domain:
         score += 70
         reasons.append("Recognized publisher or journal domain")
-    if any(word in text for word in ("author", "submission", "instruction", "guideline")):
+    if guidance_in_title:
         score += 20
-        reasons.append("Search result mentions author or submission guidance")
-    if journal_name.lower() in text:
+        reasons.append("Page title identifies author or manuscript guidance")
+    elif any(word in text for word in ("author", "submission", "instruction", "guideline", "manuscript")):
+        score += 8
+        reasons.append("Search snippet mentions author or submission guidance")
+    if requested_in_title:
         score += 10
-        reasons.append("Search result names the requested journal")
+        reasons.append("Page title names the requested journal")
+    elif journal_name.lower() in text:
+        score += 4
+        reasons.append("Search snippet names the requested journal")
     if parsed.scheme == "https":
         score += 5
         reasons.append("Uses HTTPS")
     if any(noisy in host for noisy in ("facebook.", "linkedin.", "researchgate.", "impactfactor")):
         score -= 80
         reasons.append("Third-party or social source penalty")
+    # A publisher domain is not enough.  Generic publisher pages and pages for
+    # another journal must never become a high-confidence source for this one.
+    if not (recognized_domain and requested_in_title and guidance_in_title):
+        score = min(score, 89)
+        if recognized_domain and not requested_in_title:
+            reasons.append("Not a high-confidence match: page title does not name the requested journal")
     return score, reasons
 
 
@@ -102,7 +124,7 @@ def rank_sources(journal_name: str, sources: list[dict[str, str]]) -> list[dict[
             "url": url,
             "snippet": source.get("snippet", "")[:300],
             "score": score,
-            "official_likelihood": "high" if score >= 70 else "medium" if score >= 25 else "low",
+            "official_likelihood": "high" if score >= 90 else "medium" if score >= 35 else "low",
             "trust_reasons": reasons,
         })
     return sorted(ranked, key=lambda item: item["score"], reverse=True)
@@ -141,14 +163,19 @@ def _keywords_for(path: str) -> tuple[str, ...]:
     return tuple(path.split(".")[-1].replace("_", " ").split())
 
 
-def _field_facts(rules: dict, source_text: str, source: dict[str, Any]) -> list[dict[str, Any]]:
-    lines = [line.strip() for line in source_text.splitlines() if line.strip()]
+def _field_facts(rules: dict, evidence_sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
     facts = []
     for path, value in _flatten(rules).items():
         if path == "style_name":
             continue
         keywords = _keywords_for(path)
-        excerpt = next((line for line in lines if any(word.lower() in line.lower() for word in keywords)), None)
+        match = next((
+            (source, line)
+            for source in evidence_sources
+            for line in source["text"].splitlines()
+            if line.strip() and any(word.lower() in line.lower() for word in keywords)
+        ), None)
+        source, excerpt = match if match else (None, None)
         facts.append({
             "path": path,
             "value": value,
@@ -218,11 +245,49 @@ def _refresh_draft(draft: dict) -> dict:
     return draft
 
 
+def _merge_candidates(*candidate_lists: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged, seen = [], set()
+    for candidates in candidate_lists:
+        for candidate in candidates:
+            if candidate["url"] not in seen:
+                seen.add(candidate["url"])
+                merged.append(candidate)
+    return sorted(merged, key=lambda item: item["score"], reverse=True)
+
+
+def _collect_evidence_sources(journal_name: str, seed: dict[str, Any], candidates: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Fetch a bounded set of relevant official pages and one level of links."""
+    evidence, seen = [], set()
+
+    def add(source: dict[str, Any]) -> None:
+        if source["url"] in seen or len(evidence) >= 6:
+            return
+        text = fetch_journal_page(source["url"])
+        if len(text.strip()) >= 200:
+            seen.add(source["url"])
+            evidence.append({**source, "text": text[:20_000]})
+
+    add(seed)
+    for candidate in candidates:
+        if candidate["url"] != seed["url"] and candidate["official_likelihood"] == "high":
+            add(candidate)
+    if evidence:
+        linked_raw = extract_guideline_links(evidence[0]["text"], seed["url"])
+        linked = rank_sources(journal_name, linked_raw)
+        for candidate in linked:
+            if candidate["official_likelihood"] != "low":
+                add(candidate)
+        candidates = _merge_candidates(candidates, linked)
+    return evidence, candidates
+
+
 def discover_journal(journal_name: str) -> dict:
     query = journal_name.strip()
     if len(query) < 2:
         raise ValueError("Journal name must contain at least two characters.")
-    candidates = rank_sources(query, search_journal(query, max_results=8))
+    primary = rank_sources(query, search_journal(query, max_results=8))
+    focused = [rank_sources(query, search_journal(query, max_results=5, focus=focus)) for focus in _FOLLOW_UP_TOPICS.values()]
+    candidates = _merge_candidates(primary, *focused)
     if not candidates:
         raise ValueError("No journal guideline sources were found.")
     return analyze_source(query, candidates, candidates[0]["id"])
@@ -234,10 +299,11 @@ def analyze_source(journal_name: str, candidates: list[dict[str, Any]], source_i
         raise ValueError("Selected source is not part of this discovery result.")
     if source["official_likelihood"] == "low":
         raise ValueError("That source is not credible enough for automatic rule extraction. Choose an official guideline page or upload a guideline document.")
-    source_text = fetch_journal_page(source["url"])
-    if len(source_text.strip()) < 200:
+    evidence_sources, candidates = _collect_evidence_sources(journal_name, source, candidates)
+    if not evidence_sources:
         raise ValueError("The selected source did not provide enough readable guideline text.")
-    rules = extract_rules_from_text(source_text, journal_name)
+    corpus = "\n\n".join(f"SOURCE: {item['url']}\n{item['text']}" for item in evidence_sources)
+    rules = extract_rules_from_text(corpus, journal_name)
     rules["style_name"] = journal_name
     validation_errors = _validate_rules(rules)
     draft = {
@@ -247,9 +313,14 @@ def analyze_source(journal_name: str, candidates: list[dict[str, Any]], source_i
         "selected_source": source,
         "candidates": candidates,
         "rules": rules,
-        "field_facts": _field_facts(rules, source_text, source),
+        "field_facts": _field_facts(rules, evidence_sources),
         "validation_errors": validation_errors,
         "edit_history": [],
+        "discovery_summary": {
+            "sources_inspected": [{"title": item["title"], "url": item["url"], "credibility": item["official_likelihood"]} for item in evidence_sources],
+            "pages_inspected": len(evidence_sources),
+            "search_strategy": "general author-guidance search plus targeted document, abstract, headings, and reference searches",
+        },
     }
     _refresh_draft(draft)
     _save_draft(draft)
@@ -315,7 +386,7 @@ def public_draft(draft: dict) -> dict:
         "selected_source": draft["selected_source"], "candidates": draft["candidates"], "rules": draft["rules"],
         "field_facts": draft["field_facts"], "quality": draft["quality"], "compilation": draft["compilation"],
         "verification_coverage": draft["verification_coverage"], "validation_errors": draft["validation_errors"],
-        "edit_history": draft.get("edit_history", []),
+        "edit_history": draft.get("edit_history", []), "discovery_summary": draft.get("discovery_summary", {}),
     }
 
 

@@ -35,6 +35,10 @@ class JournalIntelligenceTests(unittest.TestCase):
         self.assertEqual(ranked[0]["official_likelihood"], "high")
         self.assertTrue(ranked[0]["trust_reasons"])
 
+    def test_other_journal_page_cannot_be_high_confidence(self):
+        ranked = intelligence.rank_sources("PeerJ", [{"title": "Journal of Animal Ecology author guidelines", "url": "https://besjournals.onlinelibrary.wiley.com/guidelines", "snippet": "author instructions"}])
+        self.assertNotEqual(ranked[0]["official_likelihood"], "high")
+
     def test_reviewer_edit_records_override_and_approval_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
             drafts, approved = Path(directory) / "drafts", Path(directory) / "approved"
