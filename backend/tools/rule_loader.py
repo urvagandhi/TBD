@@ -69,6 +69,17 @@ _DISPLAY_NAMES = [
     "Chicago 17th Edition",
 ]
 
+
+def get_builtin_journals() -> list[str]:
+    """Return only the five maintained local rule profiles.
+
+    These are the only journals that can be selected without the discovery and
+    human-approval workflow.  Cached or approved discoveries deliberately do
+    not belong in this list because they are versioned research results, not
+    product-maintained defaults.
+    """
+    return list(_DISPLAY_NAMES)
+
 # In-memory cache: filename → parsed rules dict
 _RULE_CACHE: dict = {}
 
@@ -241,7 +252,7 @@ def load_rules(journal_style: str) -> dict:
 
 def get_supported_journals() -> list:
     """Return list of supported journal display names (built-in + extracted)."""
-    journals = list(_DISPLAY_NAMES)
+    journals = get_builtin_journals()
     extracted_dir = RULES_DIR / "extracted"
     if extracted_dir.exists():
         for f in sorted(extracted_dir.glob("*.json")):

@@ -34,7 +34,7 @@ from tools.docx_reader import extract_docx_text
 from tools.logger import get_logger
 from tools.pdf_reader import extract_pdf_text
 from tools.pre_format_scorer import score_pre_format
-from tools.rule_loader import JOURNAL_MAP, get_supported_journals, load_rules
+from tools.rule_loader import JOURNAL_MAP, get_builtin_journals, get_supported_journals, load_rules
 from tools.tool_errors import (
     DocumentWriteError,
     ExtractionError,
@@ -2068,10 +2068,42 @@ async def search_journals(q: str = "") -> JSONResponse:
 # ---------------------------------------------------------------------------
 @app.get("/journals")
 async def list_journal_catalog() -> JSONResponse:
-    """Return the authoritative built-in catalog used by the frontend."""
+    """Return maintained profiles plus discovery-only journal suggestions.
+
+    A discovery-directory entry has no local rules.  Choosing it must begin
+    source research, evidence review, and explicit approval.
+    """
+    discovery_directory = [
+        "Nature", "Nature Communications", "Nature Medicine", "Nature Biotechnology",
+        "Nature Machine Intelligence", "Scientific Reports", "Science", "Science Advances",
+        "Cell", "The Lancet", "The New England Journal of Medicine", "Proceedings of the National Academy of Sciences",
+        "PLOS ONE", "PLOS Biology", "PLOS Medicine", "PLOS Computational Biology", "eLife", "PeerJ",
+        "JAMA", "The BMJ", "BMC Medicine", "BMC Bioinformatics", "BMC Genomics", "Genome Biology",
+        "Nucleic Acids Research", "Bioinformatics", "Briefings in Bioinformatics", "Journal of Biomedical Informatics",
+        "IEEE Access", "IEEE Transactions on Pattern Analysis and Machine Intelligence",
+        "IEEE Transactions on Neural Networks and Learning Systems", "IEEE Transactions on Medical Imaging",
+        "ACM Computing Surveys", "ACM Transactions on Graphics", "Journal of Machine Learning Research",
+        "Artificial Intelligence", "Information Sciences", "Computer Networks", "Pattern Recognition",
+        "Physical Review Letters", "Physical Review D", "Applied Physics Letters", "Nano Letters",
+        "Journal of the American Chemical Society", "ACS Nano", "Chemical Reviews", "Angewandte Chemie",
+        "Advanced Materials", "Environmental Science & Technology", "Journal of Materials Chemistry A",
+        "Cancer Research", "Journal of Clinical Oncology", "Neurology", "Brain", "Circulation", "Diabetes Care",
+        "The American Journal of Psychiatry", "Journal of Neuroscience", "Frontiers in Neuroscience",
+        "American Economic Review", "Quarterly Journal of Economics", "Journal of Political Economy",
+        "Review of Economic Studies", "World Development", "Journal of International Economics",
+        "Administrative Science Quarterly", "Academy of Management Journal", "Strategic Management Journal",
+        "Journal of Marketing", "Harvard Business Review", "Psychological Science", "Journal of Personality and Social Psychology",
+        "Social Science & Medicine", "Sociology", "American Sociological Review", "Law and Human Behavior",
+        "Renewable Energy", "Energy", "Water Research", "Ecological Indicators", "Remote Sensing of Environment",
+        "Food Chemistry", "Journal of Food Science", "Agricultural Systems", "Plant Physiology",
+    ]
+    built_in = get_builtin_journals()
     return JSONResponse({
         "success": True,
-        "journals": [{"name": name, "source": "built-in"} for name in get_supported_journals()],
+        "journals": (
+            [{"name": name, "source": "built-in", "verified": True} for name in built_in]
+            + [{"name": name, "source": "discovery", "verified": False} for name in discovery_directory if name not in built_in]
+        ),
     })
 
 
