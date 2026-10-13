@@ -146,6 +146,8 @@ def _run_pipeline_job(
             custom_rules=json.loads(custom_rules) if custom_rules and custom_rules.strip() else None,
             guideline_pdf_bytes=kwargs.get("guideline_pdf_bytes")
         )
+        from tools.rule_instruction_compiler import compile_rule_instructions
+        rule_instructions = compile_rule_instructions(rules_override)
         logger.info("[JOB:%s] Rules prepared using RuleEngine — mode=%s", job_id, engine_mode)
 
         result = run_pipeline(
@@ -181,6 +183,7 @@ def _run_pipeline_job(
                 "formatting_report": result.get("formatting_report", {}),
                 "document_structure": result.get("document_structure", {}),
                 "rule_set_id": rule_set_id,
+                "rule_instructions": rule_instructions,
             },
         }
     except Exception as e:
@@ -773,10 +776,13 @@ async def score_pre(
         })
 
     try:
+        rule_instructions = None
         # Determine rules source based on mode
         if rule_set_id.strip():
             from tools.journal_intelligence import load_approved_rule_set
-            rules = load_approved_rule_set(rule_set_id.strip())["rules"]
+            approved = load_approved_rule_set(rule_set_id.strip())
+            rules = approved["rules"]
+            rule_instructions = approved.get("compilation")
         elif mode == "full_custom" and custom_rules and custom_rules.strip():
             try:
                 rules = json.loads(custom_rules)
@@ -800,6 +806,7 @@ async def score_pre(
             "doc_id": doc_id,
             "journal": journal,
             "rule_set_id": rule_set_id or None,
+            "rule_instructions": rule_instructions,
             "mode": mode,
             "pre_format_score": result,
         })
@@ -2059,6 +2066,15 @@ async def search_journals(q: str = "") -> JSONResponse:
 # ---------------------------------------------------------------------------
 # Evidence-backed journal intelligence
 # ---------------------------------------------------------------------------
+@app.get("/journals")
+async def list_journal_catalog() -> JSONResponse:
+    """Return the authoritative built-in catalog used by the frontend."""
+    return JSONResponse({
+        "success": True,
+        "journals": [{"name": name, "source": "built-in"} for name in get_supported_journals()],
+    })
+
+
 @app.post("/journals/discover")
 async def discover_journal_with_evidence(request: Request) -> JSONResponse:
     """Research an unknown journal and return a draft requiring user approval."""
@@ -2089,6 +2105,21 @@ async def select_journal_discovery_source(draft_id: str, request: Request) -> JS
     try:
         from tools.journal_intelligence import select_source
         draft = await asyncio.get_event_loop().run_in_executor(None, lambda: select_source(draft_id, source_id))
+        return JSONResponse({"success": True, "draft": draft})
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"success": False, "error": str(exc)})
+
+
+@app.patch("/journals/discover/{draft_id}/rules")
+async def update_journal_discovery_rules(draft_id: str, request: Request) -> JSONResponse:
+    """Apply reviewer-confirmed typed edits and recompute trust and instructions."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        from tools.journal_intelligence import update_draft_rules
+        draft = update_draft_rules(draft_id, body.get("updates", []))
         return JSONResponse({"success": True, "draft": draft})
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"success": False, "error": str(exc)})

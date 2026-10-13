@@ -719,7 +719,7 @@ export default function App() {
         headers: { 'Content-Type': 'multipart/form-data' },
         timeout: 120000,
       })
-      setTrustScore(res.data.pre_format_score)
+      setTrustScore({ ...res.data.pre_format_score, rule_instructions: res.data.rule_instructions || null })
     } catch (err) {
       const detail = err.response?.data?.detail
       const msg = typeof detail === 'object' ? detail.error : detail || err.message
@@ -792,6 +792,7 @@ export default function App() {
       critic_report: data.critic_report || null,
       verified_compliance: data.verified_compliance || report.verified_compliance || null,
       rule_set_id: data.rule_set_id || null,
+      rule_instructions: data.rule_instructions || null,
       document_structure: data.document_structure || null,
       interpretation_results: data.interpretation_results || {},
     }

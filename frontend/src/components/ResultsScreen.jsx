@@ -141,6 +141,7 @@ export default function ResultsScreen({ result, trustScore, onDownload, onDownlo
   const report = result.compliance_report || {}
   const verified = result.verified_compliance || report.verified_compliance || null
   const critic = result.critic_report || null
+  const ruleInstructions = result.rule_instructions || trustScore?.rule_instructions || null
   const applied = report.applied_transformations || report.changes_made || []
   const skipped = report.skipped_transformations || []
   const manual = report.manual_action_required || []
@@ -297,6 +298,16 @@ export default function ResultsScreen({ result, trustScore, onDownload, onDownlo
                 <strong>Generated DOCX verification:</strong> {critic.summary}
                 {critic.coverage !== undefined && <span style={{ color: 'var(--text-secondary)' }}> {critic.coverage}% output coverage.</span>}
                 {critic.repair_attempt?.attempted && <div style={{ marginTop: 4, color: 'var(--text-secondary)' }}>One safe repair pass normalized {critic.repair_attempt.changed_runs} text runs, then the file was verified again.</div>}
+              </div>
+            )}
+
+            {ruleInstructions && (
+              <div style={{ margin: '10px 16px 0', padding: '10px 12px', borderRadius: 10, background: 'var(--bg-soft)', fontSize: '0.78rem' }}>
+                <strong>Approved rule plan</strong>
+                <div style={{ color: 'var(--text-secondary)', marginTop: 4 }}>
+                  {ruleInstructions.summary?.applied_automatically ?? 0} actions applied automatically · {ruleInstructions.summary?.requires_author_action ?? 0} require your action.
+                </div>
+                {(ruleInstructions.unsupported_rules || []).map(item => <div key={item.id} style={{ marginTop: 4, color: 'var(--orange)' }}>Manual review: {item.title}</div>)}
               </div>
             )}
 
